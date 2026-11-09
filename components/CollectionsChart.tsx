@@ -1,9 +1,9 @@
 'use client';
 // Settled bank receipts per day (actual), then a hatched projection range. One scale, one axis.
 import { useEffect, useRef, useState } from 'react';
-import { TODAY, dayName, fmtDate, fmtRs } from '@/lib/engine/util';
+import { dayName, fmtDate, fmtRs } from '@/lib/engine/util';
 
-interface Props { past: { day: number; v: number }[]; fc: { day: number; low: number; high: number }[] }
+interface Props { past: { day: number; v: number }[]; fc: { day: number; low: number; high: number }[]; today: number }
 
 function niceStep(raw: number) {
   if (raw <= 0) return 1;
@@ -13,7 +13,7 @@ function niceStep(raw: number) {
 const compact = (v: number) => { const rs = v / 100; return rs >= 1000 ? 'Rs ' + Math.round(rs / 100) / 10 + 'K' : 'Rs ' + Math.round(rs); };
 const f1 = (v: number) => Math.round(v * 10) / 10;
 
-export default function CollectionsChart({ past, fc }: Props) {
+export default function CollectionsChart({ past, fc, today: TODAY }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(640);
   const [hot, setHot] = useState<number | null>(null);

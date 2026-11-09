@@ -14,10 +14,17 @@ export function pktAt(ms: number = Date.now()): { day: number; min: number } {
   return { day, min: Math.floor((t - day * MS) / 60000) };
 }
 export const pktNow = () => pktAt(Date.now());
-/** Parse a timestamp such as 2026-11-09T19:40:00+05:00 into a Pakistan-time day and minute. */
+/**
+ * Parse a timestamp such as 2026-11-09T19:40:00+05:00 into a Pakistan-time day and minute.
+ * Timestamps without a zone ("2026-11-09 14:30", "2026-11-09") are Pakistan time, never the server's zone.
+ */
 export function parseStamp(s: unknown): { day: number; min: number } | null {
   if (typeof s !== 'string' || !s.trim()) return null;
-  const ms = Date.parse(s.trim());
+  let t = s.trim();
+  const local = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/.exec(t);
+  if (local) t = local[1] + 'T' + (local[2] ?? '00').padStart(2, '0') + ':' + (local[3] ?? '00') + ':' + (local[4] ?? '00') + '+05:00';
+  else if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(t)) return null;
+  const ms = Date.parse(t);
   return Number.isFinite(ms) ? pktAt(ms) : null;
 }
 /** "2026-11-09" to a day number, or null. */

@@ -50,7 +50,7 @@ export function describePayload(ch: PayCh, payload: Record<string, unknown>, rec
     status = ({ TXN_SUCCESS: 'success', TXN_FAILED: 'failed', TXN_PENDING: 'pending' } as Record<string, string>)[str(payload.type)] || '';
   } else if (ch === 'CA') {
     tid = str(payload.receipt_no); when = payload.collected_at;
-    status = ({ COLLECTED: 'success', VOID: 'failed' } as Record<string, string>)[str(payload.status)] || '';
+    status = ({ COLLECTED: 'success', VOID: 'failed' } as Record<string, string>)[str(payload.status).toUpperCase()] || '';
   } else {
     tid = str(payload.raast_id); when = payload.at;
     status = ({ CREDITED: 'success', REJECTED: 'failed', PENDING: 'pending' } as Record<string, string>)[str(payload.status)] || '';

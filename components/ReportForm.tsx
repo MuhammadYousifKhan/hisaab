@@ -7,12 +7,12 @@ export interface ReportStrings {
   eTid: string; eAmt: string; eOther: string; sent: string; sending: string;
 }
 interface Props {
-  bid: string; strings: ReportStrings;
+  bid: string; bookId: number; strings: ReportStrings;
   channels: { v: string; label: string }[]; days: { v: number; label: string }[];
   example: { ch: string; amt: string; day: number; tid: string } | null;
 }
 
-export default function ReportForm({ bid, strings: s, channels, days, example }: Props) {
+export default function ReportForm({ bid, bookId, strings: s, channels, days, example }: Props) {
   const [state, action, pending] = useActionState<ReportState, FormData>(reportPayment, {});
   const [ch, setCh] = useState(channels[0].v);
   const [amt, setAmt] = useState('');
@@ -22,6 +22,7 @@ export default function ReportForm({ bid, strings: s, channels, days, example }:
   return (
     <form action={action} className="form" noValidate>
       <input type="hidden" name="bid" value={bid} />
+      <input type="hidden" name="bookId" value={bookId} />
       <div className="field">
         <label htmlFor="f-ch">{s.fCh}</label>
         <select id="f-ch" name="ch" value={ch} onChange={e => setCh(e.target.value)}>

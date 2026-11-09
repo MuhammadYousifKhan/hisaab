@@ -360,3 +360,28 @@ figcaption{font-size:13px;color:var(--muted);margin-top:8px;max-width:78ch}
 .home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:18px}
 .home-grid a{text-decoration:none;color:inherit}
 .home-grid .panel:hover{border-color:var(--accent)}
+
+/* Sign-in, roles, live book */
+.synth.live{border-style:solid;border-color:var(--good);color:var(--good);font-weight:700}
+.seg{display:inline-flex;gap:3px;background:var(--sunk);padding:3px;border-radius:10px}
+.seg a,.seg button{min-height:34px;padding:0 12px;border-radius:8px;border:0;background:transparent;font-weight:700;font-size:13px;color:var(--ink-2);text-decoration:none;display:inline-flex;align-items:center;cursor:pointer}
+.seg a[aria-current="true"],.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.acct{display:flex;align-items:center;gap:8px}
+.acct-name{font-size:13px;font-weight:700;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.login-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start}
+.ur-inline{font-family:var(--f-urdu);color:var(--muted);font-weight:400;margin-inline-start:6px}
+.small{font-size:12.5px}
+textarea{width:100%;border:1.5px solid var(--line-2);border-radius:10px;padding:10px 12px;font:13px var(--f-mono);background:var(--surface);color:var(--ink);resize:vertical}
+textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+.form{display:grid;gap:12px}
+.form.grid2{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.form.grid3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.form .span2,.form .span3{grid-column:1/-1;display:grid;gap:10px;justify-items:start}
+.label-like{font-weight:700;font-size:14px}
+.inline-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.inline-form input,.inline-form select{width:auto;min-height:36px;font-size:14px}
+.pin-list{display:grid;gap:8px}
+.pin-row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
+.pin-once{margin-top:6px;font-weight:400}
+.note-panel{margin-bottom:14px}
+.problems{margin:0;font-size:13px}

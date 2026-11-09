@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle as drizzlePglite, type PgliteDatabase } from 'drizzle-orm/pglite';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
@@ -17,7 +18,8 @@ export const opsFromEnv = () => ({
   username: (process.env.OPS_USERNAME || DEFAULT_OPS.username).trim().toLowerCase(),
   password: process.env.OPS_PASSWORD || DEFAULT_OPS.password,
   name: process.env.OPS_NAME || (process.env.OPS_USERNAME ? process.env.OPS_USERNAME : DEFAULT_OPS.name),
-  isDefault: !process.env.OPS_PASSWORD,
+  /** True only in development with no OPS_PASSWORD: the login page may then show the starting credentials. */
+  isDefault: !process.env.OPS_PASSWORD && process.env.NODE_ENV !== 'production',
 });
 
 export type DB = PgliteDatabase<typeof schema>;
@@ -52,7 +54,13 @@ async function connect(dataDir?: string): Promise<Conn> {
   const [{ n }] = await conn.db.select({ n: sql<number>`count(*)::int` }).from(staff);
   if (!Number(n)) {
     const o = opsFromEnv();
-    await conn.db.insert(staff).values({ username: o.username, name: o.name, passHash: await hashSecret(o.password) }).onConflictDoNothing();
+    let password = o.password;
+    if (!process.env.OPS_PASSWORD && process.env.NODE_ENV === 'production') {
+      // Never ship a well-known password: production without OPS_PASSWORD gets a random one, shown once in the server log.
+      password = randomBytes(12).toString('base64url');
+      console.warn('[hisaab] First start: created staff account "' + o.username + '" with password ' + password + ' . Set OPS_PASSWORD to choose your own, and change this one.');
+    }
+    await conn.db.insert(staff).values({ username: o.username, name: o.name, passHash: await hashSecret(password) }).onConflictDoNothing();
   }
   return conn;
 }

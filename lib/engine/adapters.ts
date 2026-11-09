@@ -7,8 +7,7 @@ import { toPaisa } from './util';
 // Channels send "5000.00", some send "5000", "5,000" or a JSON number. All become a plain decimal string.
 const Money = z.union([z.string(), z.number()])
   .transform(v => String(v).replace(/,/g, '').trim())
-  .pipe(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/, 'amount must look like 5000 or 5000.00'))
-  .refine(v => toPaisa(v) > 0, 'amount must be more than zero');
+  .pipe(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/, 'amount must look like 5000 or 5000.00').refine(v => toPaisa(v) > 0, 'amount must be more than zero'));
 const Id = z.string().min(4).max(64);
 
 const Reversal = z.object({ event: z.literal('payment.reversed'), txn_id: Id, reason: z.string(), at: z.string() });
@@ -20,9 +19,10 @@ const JazzCash = z.object({
   type: z.enum(['TXN_SUCCESS', 'TXN_FAILED', 'TXN_PENDING']), ref_no: Id, mobile: z.string().nullable(), payer: z.string(),
   amount: Money, bill_ref: z.string(), ts: z.string(), reason: z.string().nullish(),
 });
+// Agent networks send a daily CSV, so status may come in any case and refs or names may be blank.
 const Agent = z.object({
-  receipt_no: Id, agent_id: z.string(), customer_ref: z.string(), customer_name: z.string(), amount: Money,
-  status: z.enum(['COLLECTED', 'VOID']), collected_at: z.string(), reason: z.string().nullish(),
+  receipt_no: Id, agent_id: z.string(), customer_ref: z.string().catch(''), customer_name: z.string().catch(''), amount: Money,
+  status: z.string().transform(v => v.trim().toUpperCase()).pipe(z.enum(['COLLECTED', 'VOID'])), collected_at: z.string(), reason: z.string().nullish(),
 });
 const Raast = z.object({
   raast_id: Id, status: z.enum(['CREDITED', 'REJECTED', 'PENDING']), sender_title: z.string(), sender_iban: z.string(),

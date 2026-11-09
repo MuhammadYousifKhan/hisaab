@@ -170,7 +170,8 @@ function onRaw(S: State, re: RawEvent) {
   S.accepted++;
   let c;
   try { c = normalize(re); } catch (err) {
-    S.quarantined.push({ re, error: err instanceof Error ? err.message : String(err) });
+    const issues = (err as { issues?: { path: PropertyKey[]; message: string }[] }).issues;
+    S.quarantined.push({ re, error: issues ? issues.map(i => (i.path.length ? i.path.map(String).join('.') + ': ' : '') + i.message).join('; ') : err instanceof Error ? err.message : String(err) });
     return;
   }
   if (c.type === 'reversal') onReversal(S, c); else onPayment(S, c);

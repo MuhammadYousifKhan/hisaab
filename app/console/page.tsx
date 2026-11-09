@@ -5,9 +5,11 @@ import { opsDecision } from '@/app/actions';
 import CollectionsChart from '@/components/CollectionsChart';
 import SubmitButton from '@/components/SubmitButton';
 import { Audience, Facts, Pill, Rs } from '@/components/ui';
-import { loadState } from '@/lib/db/store';
+import { loadView, requireOps } from '@/lib/auth/viewer';
+import Intake from './Intake';
+import People from './People';
 import {
-  ACCTS, CH, KIND_LABEL, REASON_LABEL, TODAY, appliedInfo, bankByDay, dayName, entryById, explain, fmtDate, fmtRs, forecastDaily, forecastTotal,
+  ACCTS, CH, KIND_LABEL, REASON_LABEL, appliedInfo, bankByDay, dayName, entryById, explain, fmtDate, fmtRs, forecastDaily, forecastTotal,
   hhmm, iso, kpis, maskPhone, txState,
 } from '@/lib/engine';
 import type { Batch, Ch, Exception, State, Txn } from '@/lib/engine';
@@ -15,15 +17,19 @@ import type { Batch, Ch, Exception, State, Txn } from '@/lib/engine';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Lender console' };
 
-type Tab = 'queue' | 'pay' | 'set' | 'jrn';
+type Tab = 'queue' | 'pay' | 'set' | 'jrn' | 'people' | 'intake';
 type SP = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 const RULE: Record<string, string> = { R1: 'Loan reference', R2: 'Registered phone', R3: 'Account name', 'Ops review': 'Ops review' };
 
 export default async function ConsolePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
-  const tab: Tab = (['queue', 'pay', 'set', 'jrn'] as const).find(x => x === sp.tab) ?? 'queue';
-  const { S } = await loadState();
+  const tab: Tab = (['queue', 'pay', 'set', 'jrn', 'people', 'intake'] as const).find(x => x === sp.tab) ?? 'queue';
+  const session = await requireOps('/console' + (sp.tab ? '?tab=' + one(sp.tab) : ''));
+  const L = await loadView(session);
+  const { S } = L;
+  const bookId = L.book.id;
+  const TODAY = S.today;
   const K = kpis(S), fc = forecastTotal(S, 14);
   const autoPct = K.successN ? Math.round((K.autoN / K.successN) * 100) : 100;
   const openN = S.exceptions.filter(e => e.status !== 'resolved').length;
@@ -60,7 +66,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
             <h3>Money reaching the bank, per day</h3>
             <div className="legend"><span><i className="bar" />Settled in bank (actual)</span><span><i className="projk" />Expected payments (projection)</span></div>
           </div>
-          <CollectionsChart past={past} fc={daily} />
+          <CollectionsChart past={past} fc={daily} today={TODAY} />
           <details>
             <summary>Show as a table</summary>
             <div className="tbl-wrap">
@@ -83,16 +89,18 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
         </section>
       </div>
       <nav className="ctabs" aria-label="Console sections">
-        {([['queue', 'Review queue', openN], ['pay', 'Payments', null], ['set', 'Settlements', null], ['jrn', 'Journal', null]] as const).map(([k, l, c]) => (
+        {([['queue', 'Review queue', openN], ['pay', 'Payments', null], ['set', 'Settlements', null], ['jrn', 'Journal', null], ['people', 'Borrowers & loans', null], ['intake', 'Intake', null]] as const).map(([k, l, c]) => (
           <Link key={k} href={'/console?tab=' + k} aria-current={tab === k ? 'page' : undefined} scroll={false}>
             {l}{c !== null && <span className={'count' + (c ? '' : ' zero')}>{c}</span>}
           </Link>
         ))}
       </nav>
-      {tab === 'queue' && <Queue S={S} />}
+      {tab === 'queue' && <Queue S={S} bookId={bookId} />}
       {tab === 'pay' && <Payments S={S} sp={sp} link={link} />}
       {tab === 'set' && <Settlements S={S} />}
       {tab === 'jrn' && <Journal S={S} sp={sp} link={link} />}
+      {tab === 'people' && <People L={L} sp={sp} />}
+      {tab === 'intake' && <Intake L={L} sp={sp} />}
     </>
   );
 }
@@ -108,14 +116,14 @@ function Kpi({ label, tag, val, sub }: { label: string; tag?: string; val: React
 }
 
 /* ---------------- Review queue ---------------- */
-function Queue({ S }: { S: State }) {
+function Queue({ S, bookId }: { S: State; bookId: number }) {
   const prio = (e: Exception) => (e.kind === 'borrower_report' ? 0 : e.kind === 'missing_deposit' ? 1 : 2);
   const open = S.exceptions.filter(e => e.status !== 'resolved').sort((a, b) => prio(a) - prio(b) || b.day - a.day);
   const done = S.exceptions.filter(e => e.status === 'resolved').slice().reverse();
   return (
     <>
       <div className="exq">
-        {open.length ? open.map(ex => <ExCard key={ex.id} S={S} ex={ex} />) : <div className="panel"><Pill cls="good" icon="✓">Nothing waiting</Pill> Every payment is matched or explained.</div>}
+        {open.length ? open.map(ex => <ExCard key={ex.id} S={S} ex={ex} bookId={bookId} />) : <div className="panel"><Pill cls="good" icon="✓">Nothing waiting</Pill> Every payment is matched or explained.</div>}
       </div>
       {done.length > 0 && (
         <details className="more">
@@ -141,9 +149,10 @@ function Mono({ v }: { v: string }) { return <span className="mono">{v}</span>; 
 const bName = (S: State, id?: string | null) => (id && S.bById.has(id) ? S.bById.get(id)!.name : '—');
 const chn = (ch?: Ch) => (ch ? CH[ch].name : '');
 
-function Decide({ type, exId, label, ghost, bid }: { type: string; exId: string; label: string; ghost?: boolean; bid?: string }) {
+function Decide({ type, exId, label, ghost, bid, bookId }: { type: string; exId: string; label: string; ghost?: boolean; bid?: string; bookId: number }) {
   return (
     <form action={opsDecision} style={{ display: 'contents' }}>
+      <input type="hidden" name="bookId" value={bookId} />
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="exId" value={exId} />
       {bid && <input type="hidden" name="bid" value={bid} />}
@@ -151,21 +160,23 @@ function Decide({ type, exId, label, ghost, bid }: { type: string; exId: string;
     </form>
   );
 }
-function ApplyTo({ S, ex, def }: { S: State; ex: Exception; def?: string | null }) {
+function ApplyTo({ S, ex, def, bookId }: { S: State; ex: Exception; def?: string | null; bookId: number }) {
   return (
     <form action={opsDecision} className="actions" style={{ display: 'flex' }}>
+      <input type="hidden" name="bookId" value={bookId} />
       <input type="hidden" name="type" value="apply" />
       <input type="hidden" name="exId" value={ex.id} />
       <select name="bid" defaultValue={def || ''} aria-label={'Borrower for ' + ex.id} required>
         {!def && <option value="">Choose borrower…</option>}
-        {S.borrowers.map(b => <option key={b.id} value={b.id}>{b.name} · {b.loanId}</option>)}
+        {S.borrowers.map(b => <option key={b.id} value={b.id}>{b.name} · {b.loanId ?? b.id + ', no loan'}</option>)}
       </select>
       <SubmitButton>Apply to borrower</SubmitButton>
     </form>
   );
 }
 
-function ExCard({ S, ex }: { S: State; ex: Exception }) {
+function ExCard({ S, ex, bookId }: { S: State; ex: Exception; bookId: number }) {
+  const TODAY = S.today;
   const tx = ex.tid ? S.txns.get(ex.tid) : undefined;
   const b = ex.batch ? S.batches.get(ex.batch) : undefined;
   const ch = chn(ex.ch);
@@ -180,45 +191,45 @@ function ExCard({ S, ex }: { S: State; ex: Exception }) {
     facts = [['Payment', <Mono key="t" v={tx.tid} />], ['Received', fmtDate(tx.day) + ', ' + hhmm(tx.min)]];
     if (linkedReports.length) suggest = <><b>{bName(S, linkedReports[0].bid)}</b> reported this exact transaction ID from the borrower app.</>;
     else if (ex.suggest) suggest = <><b>{bName(S, ex.suggest.bid)}</b>: {ex.suggest.why}. Not applied automatically, because a name in a note is not proof.</>;
-    actions = <><ApplyTo S={S} ex={ex} def={def} /><Decide type="refund" exId={ex.id} label="Refund to sender" ghost /></>;
+    actions = <><ApplyTo bookId={bookId} S={S} ex={ex} def={def} /><Decide bookId={bookId} type="refund" exId={ex.id} label="Refund to sender" ghost /></>;
   } else if (ex.kind === 'reference_conflict' && tx && ex.refBid) {
     title = <><Rs v={ex.amount} /> with reference “{tx.ref}”, which is someone else’s loan</>;
     why = <>The reference points to {bName(S, ex.refBid)} ({S.loanByBid.get(ex.refBid)?.id}), but {ex.suggest?.why}. Applying it to the wrong loan would hide a missed payment, so it is held.</>;
     facts = [['Payment', <><Mono v={tx.tid} /> · {ch}</>], ['Received', fmtDate(tx.day) + ', ' + hhmm(tx.min)]];
     suggest = <>Apply to <b>{bName(S, ex.suggest?.bid)}</b>, the account holder.</>;
-    actions = <ApplyTo S={S} ex={ex} def={ex.suggest?.bid} />;
+    actions = <ApplyTo bookId={bookId} S={S} ex={ex} def={ex.suggest?.bid} />;
   } else if (ex.kind === 'possible_duplicate' && tx && ex.dupOf) {
     const first = S.txns.get(ex.dupOf)!;
     title = <>{bName(S, ex.bid)} paid <Rs v={ex.amount} /> twice, {Math.abs(tx.min - first.min)} minutes apart</>;
     why = <>{tx.tid} has the same borrower, amount and channel as {first.tid}, which was applied. This one is held until we know whether the borrower meant to pay ahead.</>;
     facts = [['First', <><Mono v={first.tid} /> · {hhmm(first.min)}</>], ['Second', <><Mono v={tx.tid} /> · {hhmm(tx.min)}</>]];
     suggest = <>Most double payments within minutes are app retries. Refund unless the borrower asks to keep it.</>;
-    actions = <><Decide type="refund" exId={ex.id} label="Mark for refund" /><Decide type="apply" exId={ex.id} label="Keep as extra payment" ghost bid={ex.bid ?? undefined} /></>;
+    actions = <><Decide bookId={bookId} type="refund" exId={ex.id} label="Mark for refund" /><Decide bookId={bookId} type="apply" exId={ex.id} label="Keep as extra payment" ghost bid={ex.bid ?? undefined} /></>;
   } else if (ex.kind === 'reversal' && tx) {
     title = <>{ch} reversed {bName(S, ex.bid)}’s <Rs v={ex.amount} /> payment</>;
     why = <>Reason from the channel: “{ex.reason}”. A mirror entry was posted automatically and installment {(ex.nos || []).map(n => '#' + n).join(', ')} is open again. The borrower should hear it from us before they see it.</>;
     facts = [['Payment', <><Mono v={tx.tid} /> · paid {fmtDate(tx.day)}</>], ['Reversed', fmtDate(tx.reversed?.day ?? ex.day)]];
-    actions = <Decide type="ack" exId={ex.id} label="Mark borrower notified" />;
+    actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark borrower notified" />;
   } else if (ex.kind === 'unexpected_deposit' && tx) {
     const def = linkedReports[0]?.bid ?? null;
     title = <><Rs v={ex.amount} /> reached the bank with no payment record</>;
     why = <>Bank narration: “{tx.ref}”. No channel reported this money, so the data alone can’t say whose it is.</>;
     facts = [['Bank line', <Mono key="l" v={tx.tid} />], ['Value date', fmtDate(tx.day)]];
     if (linkedReports.length) suggest = <><b>{bName(S, def)}</b> reported this deposit from the borrower app.</>;
-    actions = <><ApplyTo S={S} ex={ex} def={def} /><Decide type="refund" exId={ex.id} label="Return to depositor" ghost /></>;
+    actions = <><ApplyTo bookId={bookId} S={S} ex={ex} def={def} /><Decide bookId={bookId} type="refund" exId={ex.id} label="Return to depositor" ghost /></>;
   } else if (ex.kind === 'missing_deposit' && b) {
     title = <>{ch} has not settled {fmtDate(b.day)} ({b.txns.length} payment{b.txns.length === 1 ? '' : 's'})</>;
     why = <>Expected <Rs v={b.expectedNet ?? 0} /> on {fmtDate(b.day + 1)}. Nothing has arrived after {TODAY - b.day - 1} days. The payments still count for the borrowers; the money sits in clearing, marked overdue.</>;
     facts = [['Payments', <>{b.txns.map(id => { const x = S.txns.get(id)!; return <div key={id}><Mono v={id} /> {bName(S, x.borrowerId)} {fmtRs(x.amount)}</div>; })}</>]];
-    actions = ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}. Stays open until the money arrives.</span> : <Decide type="claim" exId={ex.id} label={'Raise claim with ' + ch} />;
+    actions = ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}. Stays open until the money arrives.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Raise claim with ' + ch} />;
   } else if ((ex.kind === 'settlement_short' || ex.kind === 'settlement_over') && b) {
     const short = ex.kind === 'settlement_short';
     title = <>{ch} settlement for {fmtDate(b.day)} arrived <Rs v={ex.amount} /> {short ? 'short' : 'over'}</>;
     why = <>{b.txns.length} payments totalling <Rs v={b.gross} />, minus a {(CH[b.ch].bps / 100).toFixed(1)}% fee of <Rs v={b.fee ?? 0} />{b.clawback ? <>, minus <Rs v={b.clawback} /> reversed</> : null} = <Rs v={b.expectedNet ?? 0} /> expected. The bank received <Rs v={b.received ?? 0} />.</>;
     facts = [['Bank line', <><Mono v={b.lineId ?? ''} /> · {fmtDate(b.settleDay ?? b.day)}</>]];
     actions = short
-      ? <>{ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}.</span> : <Decide type="claim" exId={ex.id} label={'Raise claim with ' + ch} ghost />}<Decide type="accept_fee" exId={ex.id} label="Accept as extra fee" /></>
-      : <Decide type="ack" exId={ex.id} label="Mark as checked" />;
+      ? <>{ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Raise claim with ' + ch} ghost />}<Decide bookId={bookId} type="accept_fee" exId={ex.id} label="Accept as extra fee" /></>
+      : <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark as checked" />;
   } else if (ex.kind === 'borrower_report') {
     title = <>{bName(S, ex.bid)} says <Rs v={ex.amount} /> by {ch} on {fmtDate(ex.payDay ?? TODAY)} is missing</>;
     facts = [['Reported ID', <Mono key="r" v={ex.reportedTid ?? ''} />]];
@@ -227,16 +238,16 @@ function ExCard({ S, ex }: { S: State; ex: Exception }) {
     if (ex.finding === 'held' && l && lt) {
       why = <>Found it: {ex.tid} is held as “{KIND_LABEL[l.kind].toLowerCase()}” ({l.id}). Applying it resolves both items.</>;
       facts.push(['Found', <><Rs v={lt.amount} /> · {fmtDate(lt.day)}{lt.amount !== ex.amount ? ' · amount differs from report' : ''}</>]);
-      actions = <Decide type="apply" exId={l.id} label={'Apply ' + ex.tid + ' to ' + bName(S, ex.bid)} bid={ex.bid ?? undefined} />;
+      actions = <Decide bookId={bookId} type="apply" exId={l.id} label={'Apply ' + ex.tid + ' to ' + bName(S, ex.bid)} bid={ex.bid ?? undefined} />;
     } else if (ex.finding === 'other' && lt) {
       why = <>{ex.tid} is already applied to {bName(S, lt.borrowerId)}. Check with both borrowers before anything moves.</>;
-      actions = <Decide type="ack" exId={ex.id} label="Mark as checked" />;
+      actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark as checked" />;
     } else if (ex.tid) {
       why = <>Found {ex.tid}, but its state is “{String(ex.finding).replace('_', ' ')}”. Explain this to the borrower before closing.</>;
-      actions = <Decide type="ack" exId={ex.id} label="Mark borrower informed" />;
+      actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark borrower informed" />;
     } else {
       why = <>No payment with this ID in any channel file yet.</>;
-      actions = ex.status === 'claimed' ? <span className="muted">Trace requested {fmtDate(ex.claim!.day)}.</span> : <Decide type="claim" exId={ex.id} label={'Ask ' + ch + ' to trace'} />;
+      actions = ex.status === 'claimed' ? <span className="muted">Trace requested {fmtDate(ex.claim!.day)}.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Ask ' + ch + ' to trace'} />;
     }
   }
   const hi = ex.kind === 'borrower_report' || ex.kind === 'missing_deposit';

@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import CopySummary from '@/components/CopySummary';
 import PersonaSelect from '@/components/PersonaSelect';
 import ReportForm, { type ReportStrings } from '@/components/ReportForm';
 import { Audience, Facts, Money, Pill } from '@/components/ui';
-import { loadState } from '@/lib/db/store';
-import { CH, REASON_UR, TODAY, appliedInfo, borrowerSummary, explain, fmtDate, fmtNum, fmtRs, hhmm, maskPhone } from '@/lib/engine';
+import { loadView, requireBorrowerView } from '@/lib/auth/viewer';
+import { CH, REASON_UR, appliedInfo, borrowerSummary, explain, fmtDate, fmtNum, fmtRs, hhmm, maskPhone } from '@/lib/engine';
 import type { BorrowerSummary, Ch, Entry, Exception, Lang, State, Txn } from '@/lib/engine';
 import { CITY_UR, parseLang, tr, ts, type StrKey } from '@/lib/i18n';
 
@@ -32,9 +32,12 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
   const sp = await searchParams;
   const lang = parseLang(sp.lang);
   const tab: Tab = (['home', 'pay', 'rec', 'help'] as const).find(x => x === sp.tab) ?? 'home';
-  const { S } = await loadState();
   const bid = id.toUpperCase();
-  if (!S.bById.has(bid)) notFound();
+  const session = await requireBorrowerView(bid, '/borrower/' + bid);
+  const { S, book } = await loadView(session);
+  // Staff who switched books land on a borrower list rather than a page from the other book.
+  if (!S.bById.has(bid)) redirect(session.role === 'ops' ? '/borrower' : '/login');
+  const staff = session.role === 'ops';
   const sum = borrowerSummary(S, bid);
   const b = sum.b, ur = lang === 'ur';
   const href = (o: { tab?: Tab; lang?: Lang; bid?: string }) => {
@@ -45,14 +48,14 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
     const s = q.toString();
     return '/borrower/' + (o.bid ?? bid) + (s ? '?' + s : '');
   };
-  const ctx: Ctx = { S, sum, lang, href };
+  const ctx: Ctx = { S, sum, lang, href, bookId: book.id };
 
   return (
     <>
       <Audience kind="borrower" />
       <div className="b-grid">
         <div className="phone-col">
-          <PersonaSelect current={bid} lang={lang} options={S.borrowers.map(x => ({ id: x.id, label: x.name + ' · ' + x.tag }))} />
+          {staff && <PersonaSelect current={bid} lang={lang} options={S.borrowers.map(x => ({ id: x.id, label: x.name + ' · ' + (x.tag ?? x.id) }))} />}
           <div className="phone">
             <div className="app" dir={ur ? 'rtl' : 'ltr'} lang={ur ? 'ur' : 'en'}>
               <div className="app-head">
@@ -77,33 +80,36 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
               </div>
             </div>
           </div>
-          <p className="phone-cap">Synthetic borrower · today is {fmtDate(TODAY, 'en', true)}</p>
+          <p className="phone-cap">{S.kind === 'demo' ? 'Synthetic borrower' : 'Live book'} · today is {fmtDate(S.today, 'en', true)}</p>
         </div>
         <aside className="why-col">
           <section className="panel">
-            <p className="eyebrow">Who this screen is for</p>
-            <h2>{b.name}, {b.work.toLowerCase()} in {b.city}</h2>
-            <p>{b.story}</p>
+            <p className="eyebrow">{staff ? 'Support view for lender staff' : 'Your account'}</p>
+            <h2>{b.name}{b.work ? ', ' + b.work.toLowerCase() : ''}{b.city ? ' in ' + b.city : ''}</h2>
+            {b.story && <p>{b.story}</p>}
             <Facts items={[
               ['Usually pays by', CH[b.ch].name],
               ['Registered phone', <span key="p" className="mono">{maskPhone(b.phone)}</span>],
-              ['Loan', sum.loan.id + ' · ' + fmtRs(sum.loan.total) + ' over ' + sum.loan.n + ' weeks'],
+              ['Loan', sum.loan ? sum.loan.id + ' · ' + fmtRs(sum.loan.total) + ' over ' + sum.loan.n + ' weeks' : 'No loan issued yet'],
               ['Credit file', 'None. The record in this app is the first one.'],
             ]} />
+            {staff && <p><Link href={'/console?tab=people&b=' + b.id}>Manage this borrower in the console</Link></p>}
           </section>
-          <section className="panel">
-            <h3>Switch borrower</h3>
-            <p className="muted">Each person carries one real-world payment problem from the challenge.</p>
-            <div className="persona-list">
-              {S.borrowers.map(x => (
-                <Link key={x.id} className="persona" href={href({ bid: x.id, tab: 'home' })} aria-current={x.id === bid ? 'true' : undefined}>
-                  <span className="avatar" aria-hidden="true">{initials(x.name)}</span>
-                  <span><b>{x.name}</b><small>{x.work}, {x.city}</small></span>
-                  <span className="tag">{x.tag}</span>
-                </Link>
-              ))}
-            </div>
-          </section>
+          {staff && (
+            <section className="panel">
+              <h3>Switch borrower</h3>
+              <p className="muted">{S.kind === 'demo' ? 'Each person carries one real-world payment problem from the challenge.' : 'Everyone in the live book, newest last.'}</p>
+              <div className="persona-list">
+                {S.borrowers.map(x => (
+                  <Link key={x.id} className="persona" href={href({ bid: x.id, tab: 'home' })} aria-current={x.id === bid ? 'true' : undefined}>
+                    <span className="avatar" aria-hidden="true">{initials(x.name)}</span>
+                    <span><b>{x.name}</b><small>{[x.work, x.city].filter(Boolean).join(', ')}</small></span>
+                    <span className="tag">{x.tag ?? x.id}</span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
           <section className="panel">
             <h3>Designed for people with thin credit files</h3>
             <ul className="choices">{CHOICES.map(c => <li key={c}><span>{c}</span></li>)}</ul>
@@ -114,8 +120,8 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
   );
 }
 
-interface Ctx { S: State; sum: BorrowerSummary; lang: Lang; href: (o: { tab?: Tab; lang?: Lang; bid?: string }) => string }
-const initials = (n: string) => n.split(' ').map(s => s[0]).slice(0, 2).join('');
+interface Ctx { S: State; sum: BorrowerSummary; lang: Lang; href: (o: { tab?: Tab; lang?: Lang; bid?: string }) => string; bookId: number }
+const initials = (n: string) => n.split(' ').filter(Boolean).map(s => s[0]).slice(0, 2).join('').toUpperCase();
 const nosText = (list: number[], lang: Lang) => {
   const xs = Array.from(new Set(list));
   if (!xs.length) return '';
@@ -127,7 +133,9 @@ const chName = (ch: Ch, lang: Lang) => (lang === 'ur' ? CH[ch].ur : CH[ch].name)
 function Home({ c, showAll }: { c: Ctx; showAll: boolean }) {
   const { sum, lang } = c;
   const ur = lang === 'ur';
-  const pct = Math.round((sum.paid / sum.loan.total) * 100);
+  if (!sum.loan) return <section className="card"><h3>{ts(lang, 'noLoanTitle')}</h3><p className="muted">{ts(lang, 'noLoanLead')}</p></section>;
+  const loan = sum.loan;
+  const pct = Math.round((sum.paid / loan.total) * 100);
   const list = showAll ? sum.changes : sum.changes.slice(0, 4);
   const n = sum.next;
   return (
@@ -137,7 +145,7 @@ function Home({ c, showAll }: { c: Ctx; showAll: boolean }) {
         <div className="big">{ur ? <><span className="num">{fmtNum(sum.owed)}</span> <small style={{ fontSize: 18 }}>روپے</small></> : <span className="num">Rs {fmtNum(sum.owed)}</span>}</div>
         <div className="meter" role="img" aria-label={ts(lang, 'meter', { pct })}><span style={{ width: pct + '%' }} /></div>
         <div className="owe-row"><span>{ts(lang, 'paidSoFar')}</span><b><Money v={sum.paid} lang={lang} /></b></div>
-        <div className="owe-row"><span>{ts(lang, 'loanTotal')}</span><b><Money v={sum.loan.total} lang={lang} /></b></div>
+        <div className="owe-row"><span>{ts(lang, 'loanTotal')}</span><b><Money v={loan.total} lang={lang} /></b></div>
         {sum.onWay > 0 && <p className="owe-note">{tr(lang, 'onWayNote', { amt: <Money v={sum.onWay} lang={lang} /> })}</p>}
       </section>
       {sum.overdue.length > 0 && (
@@ -155,12 +163,12 @@ function Home({ c, showAll }: { c: Ctx; showAll: boolean }) {
           <section className="card">
             <div className="row">
               <h3>{ts(lang, 'next')}</h3>
-              {n.due === TODAY ? <Pill cls="warn" icon="!">{ts(lang, 'dueToday')}</Pill> : <Pill cls="neutral" icon="◷">{ts(lang, 'dueOn', { date: fmtDate(n.due, lang) })}</Pill>}
+              {n.due === c.S.today ? <Pill cls="warn" icon="!">{ts(lang, 'dueToday')}</Pill> : <Pill cls="neutral" icon="◷">{ts(lang, 'dueOn', { date: fmtDate(n.due, lang) })}</Pill>}
             </div>
             <div className="next-amt"><Money v={pay} lang={lang} /></div>
             {use > 0 && <p className="muted">{tr(lang, 'creditUse', { credit: <Money v={use} lang={lang} />, pay: <Money v={pay} lang={lang} /> })}</p>}
             {n.paid > 0 && use === 0 && <p className="muted">{tr(lang, 'partPaid', { amt: <Money v={rem} lang={lang} /> })}</p>}
-            <p className="muted">{ts(lang, 'instOf', { no: n.no, n: sum.loan.n })}</p>
+            <p className="muted">{ts(lang, 'instOf', { no: n.no, n: loan.n })}</p>
           </section>
         );
       })()}
@@ -266,16 +274,16 @@ function Payments({ c }: { c: Ctx }) {
   );
 }
 
-function summaryText(sum: BorrowerSummary, lang: Lang) {
-  const r = sum.record, b = sum.b;
-  if (lang === 'ur') return ['حساب: ادائیگی کا ریکارڈ (فرضی ڈیمو)', b.ur + ' · قرض ' + sum.loan.id,
+function summaryText(sum: BorrowerSummary, lang: Lang, today: number, demo: boolean) {
+  const r = sum.record, b = sum.b, loanId = sum.loan?.id ?? '—';
+  if (lang === 'ur') return ['حساب: ادائیگی کا ریکارڈ' + (demo ? ' (فرضی ڈیمو)' : ''), b.ur + ' · قرض ' + loanId,
     'اب تک واجب اقساط: ' + r.due + ' · ادا شدہ: ' + r.paid + ' · وقت پر: ' + r.onTime,
     'مسلسل وقت پر: ' + r.streak + ' · کل واپس ادا: ' + fmtRs(r.repaid, 'ur'),
-    fmtDate(TODAY, 'ur', true) + ' کو ادارے کے بینک ریکارڈ سے جانچا گیا۔'].join('\n');
-  return ['Hisaab repayment record (synthetic demo)', b.name + ' · loan ' + sum.loan.id,
+    fmtDate(today, 'ur', true) + ' کو ادارے کے بینک ریکارڈ سے جانچا گیا۔'].join('\n');
+  return ['Hisaab repayment record' + (demo ? ' (synthetic demo)' : ''), b.name + ' · loan ' + loanId,
     'Installments due so far: ' + r.due + ' · paid: ' + r.paid + ' · on time: ' + r.onTime,
     'On time in a row: ' + r.streak + ' · total repaid: ' + fmtRs(r.repaid),
-    'Checked against lender bank records on ' + fmtDate(TODAY, 'en', true) + '.'].join('\n');
+    'Checked against lender bank records on ' + fmtDate(today, 'en', true) + '.'].join('\n');
 }
 
 function Record({ c }: { c: Ctx }) {
@@ -307,7 +315,7 @@ function Record({ c }: { c: Ctx }) {
         <p className="est-note">{ts(lang, 'recNote')}</p>
       </section>
       <section className="card">
-        <CopySummary text={summaryText(sum, lang)} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
+        <CopySummary text={summaryText(sum, lang, c.S.today, c.S.kind === 'demo')} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
       </section>
     </>
   );
@@ -334,13 +342,14 @@ function Help({ c }: { c: Ctx }) {
   const ur = lang === 'ur';
   const reported = new Set(S.reports.map(r => r.tid).filter(Boolean));
   // Demo helper: offers the ID of a held payment that really belongs to this borrower (from the generator's labels).
-  const ex = S.txnList.find(x => x.state === 'held' && x.truthBid === sum.b.id && !reported.has(x.tid));
+  // Live books have no labels, so there is no example to offer.
+  const ex = S.kind === 'demo' ? S.txnList.find(x => x.state === 'held' && x.truthBid === sum.b.id && !reported.has(x.tid)) : undefined;
   const strings: ReportStrings = {
     fCh: ts(lang, 'fCh'), fAmt: ts(lang, 'fAmt'), fDate: ts(lang, 'fDate'), fTid: ts(lang, 'fTid'), fTidHint: ts(lang, 'fTidHint'),
     fSend: ts(lang, 'fSend'), fExample: ts(lang, 'fExample'), eTid: ts(lang, 'eTid'), eAmt: ts(lang, 'eAmt'), sent: ts(lang, 'sent'),
     eOther: ur ? 'کچھ غلط ہو گیا۔ دوبارہ کوشش کریں۔' : 'Something went wrong. Please try again.', sending: ur ? 'بھیجا جا رہا ہے…' : 'Sending…',
   };
-  const days = Array.from({ length: 14 }, (_, k) => TODAY - k).map(d => ({ v: d, label: fmtDate(d, lang) + (d === TODAY ? ' · ' + ts(lang, 'today') : '') }));
+  const days = Array.from({ length: 14 }, (_, k) => S.today - k).map(d => ({ v: d, label: fmtDate(d, lang) + (d === S.today ? ' · ' + ts(lang, 'today') : '') }));
   return (
     <>
       <section className="card">
@@ -349,6 +358,7 @@ function Help({ c }: { c: Ctx }) {
         <ReportForm
           key={sum.b.id + lang}
           bid={sum.b.id}
+          bookId={c.bookId}
           strings={strings}
           channels={(['JC', 'EP', 'RA', 'CA', 'BR'] as Ch[]).map(v => ({ v, label: chName(v, lang) }))}
           days={days}
