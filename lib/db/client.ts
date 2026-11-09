@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle as drizzlePglite, type PgliteDatabase } from 'drizzle-orm/pglite';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { ACCTS } from '@/lib/engine';
 import { DDL, accounts, schema } from './schema';
@@ -30,6 +31,7 @@ async function connect(dataDir?: string): Promise<Conn> {
     };
   } else {
     const dir = dataDir || pgliteDir();
+    if (dir !== 'memory://') mkdirSync(dir, { recursive: true });
     const client = new PGlite(dir === 'memory://' ? undefined : dir);
     await client.waitReady;
     conn = { db: drizzlePglite({ client, schema }), exec: async sql => { await client.exec(sql); }, kind: 'pglite', where: dir };

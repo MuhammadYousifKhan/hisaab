@@ -151,7 +151,7 @@ function onPayment(S: State, c: Extract<ReturnType<typeof normalize>, { type: 'p
   addToBatch(S, t);
   const debit = CLR[t.ch as PayCh];
   if ('conflict' in id) {
-    t.suggest = { bid: id.conflict.suggest, why: 'The ' + id.conflict.via + ' belongs to ' + S.bById.get(id.conflict.suggest)!.name };
+    t.suggest = { bid: id.conflict.suggest, why: 'the ' + id.conflict.via + ' belongs to ' + S.bById.get(id.conflict.suggest)!.name };
     return hold(S, t, debit, 'reference_conflict', { refBid: id.conflict.refBid });
   }
   if (!t.borrowerId) {
