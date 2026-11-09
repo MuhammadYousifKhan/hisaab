@@ -5,9 +5,9 @@ import type { ReactNode } from 'react';
 import CopySummary from '@/components/CopySummary';
 import PersonaSelect from '@/components/PersonaSelect';
 import ReportForm, { type ReportStrings } from '@/components/ReportForm';
-import { Audience, Facts, Money, Pill } from '@/components/ui';
+import { Money, Pill } from '@/components/ui';
 import { loadView, requireBorrowerView } from '@/lib/auth/viewer';
-import { CH, REASON_UR, appliedInfo, borrowerSummary, explain, fmtDate, fmtNum, fmtRs, hhmm, maskPhone } from '@/lib/engine';
+import { CH, REASON_UR, appliedInfo, borrowerSummary, explain, fmtDate, fmtNum, fmtRs, hhmm } from '@/lib/engine';
 import type { BorrowerSummary, Ch, Entry, Exception, Lang, State, Txn } from '@/lib/engine';
 import { CITY_UR, parseLang, tr, ts, type StrKey } from '@/lib/i18n';
 
@@ -17,16 +17,6 @@ export const metadata: Metadata = { title: 'Borrower app' };
 type Tab = 'home' | 'pay' | 'rec' | 'help';
 const TABS: [Tab, StrKey][] = [['home', 'tabHome'], ['pay', 'tabPay'], ['rec', 'tabRec'], ['help', 'tabHelp']];
 
-const CHOICES = [
-  'Plain words. No “ledger”, “reconciliation” or “suspense” on a borrower’s screen.',
-  'Urdu with a right-to-left layout and Nastaliq script. Amounts stay in the digits people see on receipts.',
-  'Money has three states that never share a number: confirmed, on the way, and estimate. The estimate is dashed and labelled “not a promise”.',
-  'Every balance change has a one-line reason, generated from the ledger entry’s own numbers.',
-  'A missing payment can be reported from the phone with the SMS transaction ID. It reaches the lender’s review queue straight away.',
-  'The repayment record turns matched payments into evidence of reliability for people who have no credit file.',
-  'Large tap targets, text beside every symbol, no images, so it stays light on a low-end Android phone on slow data.',
-];
-
 export default async function BorrowerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -35,7 +25,6 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
   const bid = id.toUpperCase();
   const session = await requireBorrowerView(bid, '/borrower/' + bid);
   const { S, book } = await loadView(session);
-  // Staff who switched books land on a borrower list rather than a page from the other book.
   if (!S.bById.has(bid)) redirect(session.role === 'ops' ? '/borrower' : '/login');
   const staff = session.role === 'ops';
   const sum = borrowerSummary(S, bid);
@@ -52,10 +41,9 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
 
   return (
     <>
-      <Audience kind="borrower" />
       <div className="b-grid">
         <div className="phone-col">
-          {staff && <PersonaSelect current={bid} lang={lang} options={S.borrowers.map(x => ({ id: x.id, label: x.name + ' · ' + (x.tag ?? x.id) }))} />}
+          {staff && <PersonaSelect current={bid} lang={lang} options={S.borrowers.map(x => ({ id: x.id, label: x.name + ' · ' + x.id }))} />}
           <div className="phone">
             <div className="app" dir={ur ? 'rtl' : 'ltr'} lang={ur ? 'ur' : 'en'}>
               <div className="app-head">
@@ -80,41 +68,7 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
               </div>
             </div>
           </div>
-          <p className="phone-cap">{S.kind === 'demo' ? 'Synthetic borrower' : 'Live book'} · today is {fmtDate(S.today, 'en', true)}</p>
         </div>
-        <aside className="why-col">
-          <section className="panel">
-            <p className="eyebrow">{staff ? 'Support view for lender staff' : 'Your account'}</p>
-            <h2>{b.name}{b.work ? ', ' + b.work.toLowerCase() : ''}{b.city ? ' in ' + b.city : ''}</h2>
-            {b.story && <p>{b.story}</p>}
-            <Facts items={[
-              ['Usually pays by', CH[b.ch].name],
-              ['Registered phone', <span key="p" className="mono">{maskPhone(b.phone)}</span>],
-              ['Loan', sum.loan ? sum.loan.id + ' · ' + fmtRs(sum.loan.total) + ' over ' + sum.loan.n + ' weeks' : 'No loan issued yet'],
-              ['Credit file', 'None. The record in this app is the first one.'],
-            ]} />
-            {staff && <p><Link href={'/console?tab=people&b=' + b.id}>Manage this borrower in the console</Link></p>}
-          </section>
-          {staff && (
-            <section className="panel">
-              <h3>Switch borrower</h3>
-              <p className="muted">{S.kind === 'demo' ? 'Each person carries one real-world payment problem from the challenge.' : 'Everyone in the live book, newest last.'}</p>
-              <div className="persona-list">
-                {S.borrowers.map(x => (
-                  <Link key={x.id} className="persona" href={href({ bid: x.id, tab: 'home' })} aria-current={x.id === bid ? 'true' : undefined}>
-                    <span className="avatar" aria-hidden="true">{initials(x.name)}</span>
-                    <span><b>{x.name}</b><small>{[x.work, x.city].filter(Boolean).join(', ')}</small></span>
-                    <span className="tag">{x.tag ?? x.id}</span>
-                  </Link>
-                ))}
-              </div>
-            </section>
-          )}
-          <section className="panel">
-            <h3>Designed for people with thin credit files</h3>
-            <ul className="choices">{CHOICES.map(c => <li key={c}><span>{c}</span></li>)}</ul>
-          </section>
-        </aside>
       </div>
     </>
   );
@@ -274,13 +228,13 @@ function Payments({ c }: { c: Ctx }) {
   );
 }
 
-function summaryText(sum: BorrowerSummary, lang: Lang, today: number, demo: boolean) {
+function summaryText(sum: BorrowerSummary, lang: Lang, today: number) {
   const r = sum.record, b = sum.b, loanId = sum.loan?.id ?? '—';
-  if (lang === 'ur') return ['حساب: ادائیگی کا ریکارڈ' + (demo ? ' (فرضی ڈیمو)' : ''), b.ur + ' · قرض ' + loanId,
+  if (lang === 'ur') return ['حساب: ادائیگی کا ریکارڈ', b.ur + ' · قرض ' + loanId,
     'اب تک واجب اقساط: ' + r.due + ' · ادا شدہ: ' + r.paid + ' · وقت پر: ' + r.onTime,
     'مسلسل وقت پر: ' + r.streak + ' · کل واپس ادا: ' + fmtRs(r.repaid, 'ur'),
     fmtDate(today, 'ur', true) + ' کو ادارے کے بینک ریکارڈ سے جانچا گیا۔'].join('\n');
-  return ['Hisaab repayment record' + (demo ? ' (synthetic demo)' : ''), b.name + ' · loan ' + loanId,
+  return ['Hisaab repayment record', b.name + ' · loan ' + loanId,
     'Installments due so far: ' + r.due + ' · paid: ' + r.paid + ' · on time: ' + r.onTime,
     'On time in a row: ' + r.streak + ' · total repaid: ' + fmtRs(r.repaid),
     'Checked against lender bank records on ' + fmtDate(today, 'en', true) + '.'].join('\n');
@@ -315,7 +269,7 @@ function Record({ c }: { c: Ctx }) {
         <p className="est-note">{ts(lang, 'recNote')}</p>
       </section>
       <section className="card">
-        <CopySummary text={summaryText(sum, lang, c.S.today, c.S.kind === 'demo')} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
+        <CopySummary text={summaryText(sum, lang, c.S.today)} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
       </section>
     </>
   );
@@ -340,13 +294,9 @@ function reportState(S: State, r: Exception, lang: Lang): [string, string, strin
 function Help({ c }: { c: Ctx }) {
   const { S, sum, lang } = c;
   const ur = lang === 'ur';
-  const reported = new Set(S.reports.map(r => r.tid).filter(Boolean));
-  // Demo helper: offers the ID of a held payment that really belongs to this borrower (from the generator's labels).
-  // Live books have no labels, so there is no example to offer.
-  const ex = S.kind === 'demo' ? S.txnList.find(x => x.state === 'held' && x.truthBid === sum.b.id && !reported.has(x.tid)) : undefined;
   const strings: ReportStrings = {
     fCh: ts(lang, 'fCh'), fAmt: ts(lang, 'fAmt'), fDate: ts(lang, 'fDate'), fTid: ts(lang, 'fTid'), fTidHint: ts(lang, 'fTidHint'),
-    fSend: ts(lang, 'fSend'), fExample: ts(lang, 'fExample'), eTid: ts(lang, 'eTid'), eAmt: ts(lang, 'eAmt'), sent: ts(lang, 'sent'),
+    fSend: ts(lang, 'fSend'), eTid: ts(lang, 'eTid'), eAmt: ts(lang, 'eAmt'), sent: ts(lang, 'sent'),
     eOther: ur ? 'کچھ غلط ہو گیا۔ دوبارہ کوشش کریں۔' : 'Something went wrong. Please try again.', sending: ur ? 'بھیجا جا رہا ہے…' : 'Sending…',
   };
   const days = Array.from({ length: 14 }, (_, k) => S.today - k).map(d => ({ v: d, label: fmtDate(d, lang) + (d === S.today ? ' · ' + ts(lang, 'today') : '') }));
@@ -362,7 +312,6 @@ function Help({ c }: { c: Ctx }) {
           strings={strings}
           channels={(['JC', 'EP', 'RA', 'CA', 'BR'] as Ch[]).map(v => ({ v, label: chName(v, lang) }))}
           days={days}
-          example={ex ? { ch: ex.ch, amt: String(ex.amount / 100), day: ex.day, tid: ex.tid } : null}
         />
       </section>
       {sum.reports.length > 0 && (

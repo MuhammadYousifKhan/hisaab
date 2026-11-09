@@ -31,10 +31,10 @@ export function SendForm({ borrowers }: { borrowers: { id: string; name: string;
       <div className="field"><label htmlFor="sm-amt">Amount (Rs)</label><input id="sm-amt" name="amount" inputMode="decimal" defaultValue="2000" required /></div>
       <div className="field"><label htmlFor="sm-st">Outcome</label>
         <select id="sm-st" name="status" defaultValue="success"><option value="success">Succeeded</option><option value="failed">Failed</option><option value="pending">Still pending</option></select></div>
-      <div className="field"><label htmlFor="sm-ph">Sender’s phone (wallets)</label><input id="sm-ph" name="phone" inputMode="tel" dir="ltr" placeholder="blank = the borrower’s own number" />
-        <span className="hint">Type another number to reproduce “paid from a relative’s phone”.</span></div>
-      <div className="field"><label htmlFor="sm-nm">Sender’s name</label><input id="sm-nm" name="name" placeholder="blank = the borrower’s name" /></div>
-      <div className="field"><label htmlFor="sm-ref">Reference / note</label><input id="sm-ref" name="ref" placeholder="e.g. L002, or a wrong loan ID" /></div>
+      <div className="field"><label htmlFor="sm-ph">Sender’s phone (wallets)</label><input id="sm-ph" name="phone" inputMode="tel" dir="ltr" placeholder="blank = their own" />
+        </div>
+      <div className="field"><label htmlFor="sm-nm">Sender’s name</label><input id="sm-nm" name="name" placeholder="blank = their own" /></div>
+      <div className="field"><label htmlFor="sm-ref">Reference / note</label><input id="sm-ref" name="ref" placeholder="e.g. L002" /></div>
       <div className="field"><label htmlFor="sm-ago">Sent minutes ago</label><input id="sm-ago" name="minsAgo" inputMode="numeric" defaultValue="0" /></div>
       <div className="span2"><Out s={s} pending={pending} /><button type="submit" className="btn" disabled={pending}>{pending ? 'Sending…' : 'Send payment'}</button></div>
     </form>

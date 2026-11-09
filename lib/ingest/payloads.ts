@@ -12,7 +12,7 @@ export interface PaymentSpec {
   status: PayStatus; failReason?: string | null; day: number; min: number; agentId?: string;
 }
 
-/** The JSON body a channel would POST for a payment. Mirrors the demo generator's shapes. */
+/** The JSON body a channel would POST for a payment. Each channel has its own shape. */
 export function paymentPayload(p: PaymentSpec): Record<string, unknown> {
   const at = stamp(p.day, p.min);
   let payload: Record<string, unknown>;

@@ -11,7 +11,6 @@ type SP = Record<string, string | string[] | undefined>;
 
 export default async function Intake({ L }: { L: Loaded; sp: SP }) {
   const { S, book, conn } = L;
-  const live = book.kind === 'live';
   const h = await headers();
   const base = (h.get('x-forwarded-proto') ?? 'http') + '://' + (h.get('host') ?? 'localhost:3000');
   const token = ingestToken();
@@ -26,48 +25,41 @@ export default async function Intake({ L }: { L: Loaded; sp: SP }) {
 
   return (
     <>
-      {!live && (
-        <div className="panel note-panel">
-          <Pill cls="neutral" icon="i">Demo book</Pill> Uploads and webhooks always go to the <b>live</b> book. The log below shows the demo book’s generated files.
-        </div>
-      )}
       <div className="p-grid mt">
         <section className="panel">
-          <h3>Agent network collections</h3>
-          <p className="muted">The cash-agent network’s daily file. Each row is stored exactly as received, then matched like any other payment. Columns: <span className="mono">receipt_no, agent_id, customer_ref, customer_name, amount, status (COLLECTED or VOID), collected_at</span>.</p>
+          <h3>Agent collections</h3>
+          <p className="muted small">Columns: <span className="mono">receipt_no, agent_id, customer_ref, customer_name, amount, status, collected_at</span></p>
           <AgentUpload sample={agentSample} />
         </section>
         <section className="panel">
           <h3>Bank statement</h3>
-          <p className="muted">Credits to the lender’s account. Settlements are matched by their reference (for example <span className="mono">EP-SETL-{iso(d - 1)}</span> or <span className="mono">RAAST-…</span>); anything else is held as a deposit with no record. Columns: <span className="mono">date, time, amount, narration, ref, bank_ref</span>.</p>
+          <p className="muted small">Columns: <span className="mono">date, time, amount, narration, ref, bank_ref</span></p>
           <BankUpload sample={bankSample} />
         </section>
       </div>
 
       <section className="panel mt">
-        <h3>Channel webhooks</h3>
-        <p className="muted">Easypaisa, JazzCash and the bank’s Raast feed post each payment as it happens. Every request needs the ingest token. A repeat delivery is stored and flagged, never applied twice; a payload that fails validation is stored and quarantined, never dropped.</p>
+        <h3>Webhooks</h3>
         <div className="tbl-wrap">
           <table>
-            <thead><tr><th>Channel</th><th>Address</th><th>Answers</th></tr></thead>
+            <thead><tr><th>Channel</th><th>Address</th></tr></thead>
             <tbody>
               {(['easypaisa', 'jazzcash', 'raast', 'agent'] as const).map(s => (
-                <tr key={s}><td className="nw">{CH[({ easypaisa: 'EP', jazzcash: 'JC', raast: 'RA', agent: 'CA' } as const)[s]].name}</td><td className="mono">POST {base}/api/channels/{s}</td><td className="muted">202 accepted · 200 repeat · 422 quarantined · 401 bad token</td></tr>
+                <tr key={s}><td className="nw">{CH[({ easypaisa: 'EP', jazzcash: 'JC', raast: 'RA', agent: 'CA' } as const)[s]].name}</td><td className="mono">POST {base}/api/channels/{s}</td></tr>
               ))}
-              <tr><td className="nw">Bank statement</td><td className="mono">POST {base}/api/bank/statement</td><td className="muted">JSON array of lines; 200 with added, repeat and skipped counts</td></tr>
+              <tr><td className="nw">Bank statement</td><td className="mono">POST {base}/api/bank/statement</td></tr>
             </tbody>
           </table>
         </div>
-        <p>Ingest token: {token ? <span className="mono">{token}</span> : <b>not set. Set INGEST_TOKEN to turn the webhooks on.</b>}{token && !process.env.INGEST_TOKEN && <span className="muted"> (development default; set INGEST_TOKEN before going live)</span>}</p>
+        <p>Ingest token: {token ? <span className="mono">{token}</span> : <b>not set. Set INGEST_TOKEN to turn the webhooks on.</b>}</p>
         <details>
-          <summary>Try it: send a JazzCash payment</summary>
+          <summary>Example request</summary>
           <pre className="raw">{curl}</pre>
         </details>
       </section>
 
       <section className="panel mt">
-        <h3>Latest inputs</h3>
-        <p className="muted">Newest first, in the order they reached the {live ? 'live' : 'demo'} book. Open a payment to trace it from the raw payload to the bank.</p>
+        <h3>Latest</h3>
         <div className="tbl-wrap">
           <table>
             <thead><tr><th className="n">#</th><th>Input</th><th>Source</th><th>Reference</th><th className="n">Amount</th><th>Result</th></tr></thead>
@@ -92,7 +84,7 @@ export default async function Intake({ L }: { L: Loaded; sp: SP }) {
                   </tr>
                 );
               })}
-              {!log.length && <tr><td colSpan={6} className="muted">Nothing received yet. Send a payment from the Simulator, upload a file, or call a webhook.</td></tr>}
+              {!log.length && <tr><td colSpan={6} className="muted">Nothing received yet.</td></tr>}
             </tbody>
           </table>
         </div>

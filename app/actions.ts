@@ -1,13 +1,11 @@
 'use server';
 // Server actions. Each one checks who is calling (they are public endpoints), validates every input,
-// and writes append-only. Forms carry the book they were rendered for, so a book switched in another tab
-// can never receive a decision meant for this one.
+// and writes append-only.
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { actorName, getSession, loadView, requireOps, setViewKind } from '@/lib/auth/viewer';
-import { getConn } from '@/lib/db/client';
-import { appendAction, createBook, createLiveBook, dbReplay, dbTryEdit, dbTryUnbalanced, loadState } from '@/lib/db/store';
+import { actorName, getSession, loadView, requireOps } from '@/lib/auth/viewer';
+import { appendAction, dbReplay, dbTryEdit, dbTryUnbalanced, loadState } from '@/lib/db/store';
 import { tryUnbalanced } from '@/lib/engine';
 import type { Action } from '@/lib/engine';
 
@@ -90,24 +88,4 @@ export async function proofUnbalanced(): Promise<ProofResult> {
 export async function proofEdit(): Promise<ProofResult> {
   const L = await loadView();
   return dbTryEdit(L.conn, L.book.id);
-}
-
-/** Start a fresh book. Old books stay in the database untouched. Staff only. */
-export async function newBook(fd: FormData): Promise<void> {
-  await requireOps('/proof');
-  const conn = await getConn();
-  if (fd.get('kind') === 'live') {
-    if (fd.get('confirm') !== 'NEW') redirect('/proof?err=confirm');
-    await createLiveBook(conn);
-    await setViewKind('live');
-    revalidatePath('/', 'layout');
-    redirect('/proof?fresh=live');
-  }
-  const raw = String(fd.get('seed') ?? '').trim();
-  const seed = raw === 'random' ? 1 + Math.floor(Math.random() * 99999) : Number(raw);
-  if (!Number.isInteger(seed) || seed < 1 || seed > 2147483647) redirect('/proof?err=seed');
-  await createBook(conn, seed);
-  await setViewKind('demo');
-  revalidatePath('/', 'layout');
-  redirect('/proof?fresh=' + seed);
 }

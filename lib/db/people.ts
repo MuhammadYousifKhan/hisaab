@@ -2,7 +2,6 @@
 // failed sign-ins lock an account for a while. Nothing here touches the ledger.
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { hashSecret, verifySecret } from '@/lib/auth/password';
-import { DEMO_PIN } from '@/lib/auth/demo';
 import type { Conn } from './client';
 import { borrowerLogins, staff } from './schema';
 import type { Book } from './store';
@@ -34,11 +33,10 @@ export async function addStaff(conn: Conn, username: string, name: string, passw
 export type PinResult = { ok: true } | { ok: false; reason: 'wrong' | 'locked' | 'no_login'; minutes?: number };
 
 /**
- * Check a borrower's PIN. Demo books use the shared demo PIN. Live books check the stored hash and lock
- * the account for LOCK_MINUTES after MAX_FAILED wrong attempts in a row.
+ * Check a borrower's PIN against the stored hash. After MAX_FAILED wrong attempts in a row the account
+ * is locked for LOCK_MINUTES.
  */
 export async function checkBorrowerPin(conn: Conn, book: Book, bid: string, pin: string, now = new Date()): Promise<PinResult> {
-  if (book.kind === 'demo') return pin === DEMO_PIN ? { ok: true } : { ok: false, reason: 'wrong' };
   const where = and(eq(borrowerLogins.bookId, book.id), eq(borrowerLogins.borrowerId, bid));
   const [row] = await conn.db.select().from(borrowerLogins).where(where).limit(1);
   if (!row) return { ok: false, reason: 'no_login' };

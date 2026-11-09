@@ -9,7 +9,6 @@ type SP = Record<string, string | string[] | undefined>;
 
 export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
   const { S, book, conn } = L;
-  const live = book.kind === 'live';
   const staff = await listStaff(conn);
   const focus = typeof sp.b === 'string' ? sp.b : '';
   const rows = S.borrowers.map(b => {
@@ -22,15 +21,9 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
 
   return (
     <>
-      {sp.empty === '1' && <div className="done" role="status">No borrowers in this book yet. Add the first one below.</div>}
-      {!live && (
-        <div className="panel note-panel">
-          <Pill cls="neutral" icon="i">Demo book</Pill> The demo book is generated from a seed, so its borrowers and loans are fixed.
-          Switch to the <b>Live</b> book in the top bar to add borrowers, issue loans and take payments.
-        </div>
-      )}
+      {sp.empty === '1' && <div className="done" role="status">No borrowers yet. Add the first one below.</div>}
       <section className="panel mt">
-        <div className="row"><h3>Borrowers ({S.borrowers.length})</h3>{live && <a href="#add-borrower" className="btn sm ghost">Add borrower</a>}</div>
+        <div className="row"><h3>Borrowers ({S.borrowers.length})</h3><a href="#add-borrower" className="btn sm ghost">Add borrower</a></div>
         {rows.length ? (
           <div className="tbl-wrap">
             <table>
@@ -56,25 +49,20 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
         ) : <p className="muted">No borrowers yet.</p>}
       </section>
 
-      {live && (
-        <div className="p-grid">
-          <section className="panel" id="add-borrower">
-            <h3>Add a borrower</h3>
-            <p className="muted">Opens their account and sets the PIN they use to sign in to the borrower app. Their phone number is how wallet payments are matched to them.</p>
-            <AddBorrowerForm bookId={book.id} />
-          </section>
-          <section className="panel" id="issue-loan">
-            <h3>Issue a loan</h3>
-            <p className="muted">One loan per borrower. The disbursement is posted to the journal the moment it is issued: loans receivable against loan capital and service charge income.</p>
-            <IssueLoanForm bookId={book.id} borrowers={noLoan} today={S.today} />
-          </section>
-        </div>
-      )}
+      <div className="p-grid">
+        <section className="panel" id="add-borrower">
+          <h3>Add a borrower</h3>
+          <AddBorrowerForm bookId={book.id} />
+        </section>
+        <section className="panel" id="issue-loan">
+          <h3>Issue a loan</h3>
+          <IssueLoanForm bookId={book.id} borrowers={noLoan} today={S.today} />
+        </section>
+      </div>
 
-      {live && S.borrowers.length > 0 && (
+      {S.borrowers.length > 0 && (
         <section className="panel mt">
-          <h3>Forgotten PIN</h3>
-          <p className="muted">Set a new PIN for a borrower. It also clears the 5-minute lock after too many wrong tries.</p>
+          <h3>Reset a PIN</h3>
           <div className="pin-list">
             {S.borrowers.map(b => <div key={b.id} className="pin-row"><span><b className="mono">{b.id}</b> {b.name}</span><ResetPinForm bookId={book.id} bid={b.id} /></div>)}
           </div>
@@ -82,8 +70,7 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
       )}
 
       <section className="panel mt">
-        <h3>Staff accounts</h3>
-        <p className="muted">Everyone who can sign in to this console. Every decision in the review queue is recorded under the name of the person who made it.</p>
+        <h3>Staff</h3>
         <ul className="plain">{staff.map(s => <li key={s.id}><b>{s.name}</b> <span className="muted mono">{s.username}</span></li>)}</ul>
         <AddStaffForm />
       </section>

@@ -88,12 +88,12 @@ export async function resetPin(_prev: FormState, fd: FormData): Promise<FormStat
   const conn = await getConn();
   const pin = p.data.pin || newPin();
   const ok = await resetBorrowerPin(conn, p.data.bookId, p.data.bid, pin);
-  if (!ok) return { error: 'No sign-in found for ' + p.data.bid + '. Demo borrowers always use PIN 1234.' };
+  if (!ok) return { error: 'No sign-in found for ' + p.data.bid + '.' };
   return { ok: 'New PIN set for ' + p.data.bid + '. Any lock is cleared.', pin: p.data.pin ? undefined : pin };
 }
 
 const NewStaff = z.object({
-  username: z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{3,30}$/, 'Username: 3 to 30 letters, numbers, dots or dashes'),
+  username: z.string().trim().toLowerCase().regex(/^(?=.*[a-z])[a-z0-9._-]{3,30}$/, 'Username: 3 to 30 characters with at least one letter'),
   name: z.string().trim().min(2, 'Enter their name').max(60),
   password: z.string().min(8, 'Password: at least 8 characters').max(200),
 });

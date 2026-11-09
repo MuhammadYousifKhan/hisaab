@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { opsDecision } from '@/app/actions';
 import CollectionsChart from '@/components/CollectionsChart';
 import SubmitButton from '@/components/SubmitButton';
-import { Audience, Facts, Pill, Rs } from '@/components/ui';
+import { Facts, Pill, Rs } from '@/components/ui';
 import { loadView, requireOps } from '@/lib/auth/viewer';
 import Intake from './Intake';
 import People from './People';
@@ -51,7 +51,6 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <Audience kind="console" />
       {banner}
       <div className="kpis">
         <Kpi label="Collected in bank" tag="Actual" val={<Rs v={K.bank} />} sub={'after ' + fmtRs(K.fees) + ' channel fees'} />
@@ -85,7 +84,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
           <h3>Expected payments, {fmtDate(fc.from)} to {fmtDate(fc.to)}</h3>
           <p className="fc-range"><Rs v={fc.low} /> – <Rs v={fc.high} /></p>
           <p className="muted">Most likely around <Rs v={fc.mid} /></p>
-          <p className="fc-method">Each installment falling due in the next 14 days, times that borrower’s on-time rate so far, with a band of −20 and +10 points. Saved credit is netted off and overdue amounts are left out. This figure is never added to the actual totals and never posted to the ledger.</p>
+          <p className="fc-method">Never added to the actual totals.</p>
         </section>
       </div>
       <nav className="ctabs" aria-label="Console sections">
@@ -123,7 +122,7 @@ function Queue({ S, bookId }: { S: State; bookId: number }) {
   return (
     <>
       <div className="exq">
-        {open.length ? open.map(ex => <ExCard key={ex.id} S={S} ex={ex} bookId={bookId} />) : <div className="panel"><Pill cls="good" icon="✓">Nothing waiting</Pill> Every payment is matched or explained.</div>}
+        {open.length ? open.map(ex => <ExCard key={ex.id} S={S} ex={ex} bookId={bookId} />) : <div className="panel"><Pill cls="good" icon="✓">Nothing waiting</Pill></div>}
       </div>
       {done.length > 0 && (
         <details className="more">
@@ -293,7 +292,7 @@ function Payments({ S, sp, link }: { S: State; sp: SP; link: (o: Record<string, 
           </select>
         </div>
         <button type="submit" className="btn sm ghost">Filter</button>
-        <p className="muted" style={{ paddingBottom: 10 }}>{rows.length} payments · open “Trace” to follow one from raw file to bank</p>
+        <p className="muted" style={{ paddingBottom: 10 }}>{rows.length} payments</p>
       </form>
       <div className="tbl-wrap">
         <table>
@@ -363,7 +362,6 @@ function Settlements({ S }: { S: State }) {
   const list = Array.from(S.batches.values()).filter(b => b.ch !== 'RA').sort((a, b) => b.day - a.day || a.ch.localeCompare(b.ch));
   return (
     <>
-      <p className="muted" style={{ marginBottom: 10 }}>Wallets and the agent network pay out each day’s payments as one bank deposit the next morning, minus their fee (synthetic rates: Easypaisa 1.2%, JazzCash 1.5%, agents 1.0%). Raast transfers land one by one and are matched individually.</p>
       <div className="tbl-wrap">
         <table>
           <thead><tr><th>Batch</th><th>Channel</th><th className="n">Payments</th><th className="n">Gross</th><th className="n">Fee</th><th className="n">Reversed</th><th className="n">Expected</th><th className="n">Received</th><th className="n">Gap</th><th>Status</th></tr></thead>
@@ -412,7 +410,7 @@ function Journal({ S, sp, link }: { S: State; sp: SP; link: (o: Record<string, s
           </select>
         </div>
         <button type="submit" className="btn sm ghost">Filter</button>
-        <p className="muted" style={{ paddingBottom: 10 }}>{list.length} entries · append-only, corrections are new entries · open one to see its debit and credit lines</p>
+        <p className="muted" style={{ paddingBottom: 10 }}>{list.length} entries</p>
       </form>
       <div className="tbl-wrap">
         <table>

@@ -5,7 +5,7 @@ export default function PersonaSelect({ current, options, lang }: { current: str
   const router = useRouter();
   return (
     <div className="viewing">
-      <label htmlFor="persona-sel">Viewing as</label>
+      <label htmlFor="persona-sel">Borrower</label>
       <select id="persona-sel" value={current} onChange={e => router.push('/borrower/' + e.target.value + (lang === 'ur' ? '?lang=ur' : ''))}>
         {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>
