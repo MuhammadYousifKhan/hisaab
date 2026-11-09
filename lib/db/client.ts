@@ -6,8 +6,19 @@ import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { sql } from 'drizzle-orm';
+import { hashSecret } from '@/lib/auth/password';
 import { ACCTS } from '@/lib/engine';
-import { DDL, accounts, schema } from './schema';
+import { DDL, accounts, schema, staff } from './schema';
+
+/** The first staff account, created on first start. Set OPS_USERNAME / OPS_PASSWORD / OPS_NAME to choose it. */
+export const DEFAULT_OPS = { username: 'sana', password: 'hisaab-ops', name: 'Sana (finance)' };
+export const opsFromEnv = () => ({
+  username: (process.env.OPS_USERNAME || DEFAULT_OPS.username).trim().toLowerCase(),
+  password: process.env.OPS_PASSWORD || DEFAULT_OPS.password,
+  name: process.env.OPS_NAME || (process.env.OPS_USERNAME ? process.env.OPS_USERNAME : DEFAULT_OPS.name),
+  isDefault: !process.env.OPS_PASSWORD,
+});
 
 export type DB = PgliteDatabase<typeof schema>;
 interface Conn { db: DB; exec: (sql: string) => Promise<void>; kind: 'pglite' | 'postgres'; where: string }
@@ -38,6 +49,11 @@ async function connect(dataDir?: string): Promise<Conn> {
   }
   await conn.exec(DDL);
   await conn.db.insert(accounts).values(Object.entries(ACCTS).map(([code, a]) => ({ code, name: a.name, type: a.type }))).onConflictDoNothing();
+  const [{ n }] = await conn.db.select({ n: sql<number>`count(*)::int` }).from(staff);
+  if (!Number(n)) {
+    const o = opsFromEnv();
+    await conn.db.insert(staff).values({ username: o.username, name: o.name, passHash: await hashSecret(o.password) }).onConflictDoNothing();
+  }
   return conn;
 }
 
