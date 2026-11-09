@@ -29,7 +29,7 @@ export function checkPayload(it: RawIn): string | null {
 
 export async function ingestPayments(items: RawIn[], conn?: Conn): Promise<{ bookId: number; results: IngestResult[] }> {
   const c = conn ?? (await getConn());
-  const book = await currentBook(c, 'live');
+  const book = await currentBook(c);
   const out = await appendRaw(c, book.id, items);
   const results = out.map((o, i): IngestResult => {
     if (o.duplicate) return { status: 'duplicate', id: o.id, tid: o.tid };
@@ -41,7 +41,7 @@ export async function ingestPayments(items: RawIn[], conn?: Conn): Promise<{ boo
 
 export async function ingestBank(lines: BankIn[], conn?: Conn) {
   const c = conn ?? (await getConn());
-  const book = await currentBook(c, 'live');
+  const book = await currentBook(c);
   return { bookId: book.id, results: await appendBank(c, book.id, lines) };
 }
 

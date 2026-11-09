@@ -13,7 +13,7 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const ok = typeof sp.ok === 'string' ? sp.ok.slice(0, 200) : '';
   await requireOps('/simulate');
-  const L = await loadState({ kind: 'live' });
+  const L = await loadState();
   const { S, book } = L;
   const withLoan = S.borrowers.filter(b => S.loanByBid.has(b.id)).map(b => ({ id: b.id, name: b.name, phone: b.phone }));
   const reversible = S.txnList.filter(t => t.ch !== 'BR' && (t.state === 'applied' || t.state === 'held')).slice().reverse().slice(0, 40)

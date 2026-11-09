@@ -41,7 +41,7 @@ export async function submitApplication(_prev: ApplyState, fd: FormData): Promis
   const h = await headers();
   if (tooMany((h.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'local')) return { error: 'Too many applications from this connection. Try again later.' };
   const conn = await getConn();
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   const r = await createApplication(conn, book.id, { name: p.data.name, phone, work: p.data.work, city: p.data.city, ch: p.data.ch, amount: p.data.amount * 100, weeks: p.data.weeks }, await hashSecret(p.data.pin));
   if ('error' in r) return { error: r.error === 'borrower' ? 'This number already has an account. Sign in instead.' : 'An application from this number is already being reviewed.' };
   return { ok: true };

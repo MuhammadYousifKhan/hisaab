@@ -35,7 +35,7 @@ export async function simSend(_prev: SimState, fd: FormData): Promise<SimState> 
   const p = Send.safeParse(Object.fromEntries(fd));
   if (!p.success) return { error: p.error.issues[0]?.message ?? 'Check the form.' };
   const conn = await getConn();
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   const L = await loadState({ conn, bookId: book.id });
   const b = p.data.bid === 'unknown' ? null : L.S.bById.get(p.data.bid);
   if (p.data.bid !== 'unknown' && !b) return { error: 'That borrower is not in the live book.' };
@@ -66,7 +66,7 @@ export async function simReverse(_prev: SimState, fd: FormData): Promise<SimStat
   const p = z.object({ tid: z.string().min(4).max(40), reason: z.string().trim().min(2).max(80) }).safeParse(Object.fromEntries(fd));
   if (!p.success) return { error: 'Choose a payment and give a reason.' };
   const conn = await getConn();
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   const L = await loadState({ conn, bookId: book.id });
   const t = L.S.txns.get(p.data.tid);
   if (!t || t.ch === 'BR') return { error: 'No channel payment with that ID.' };
@@ -83,7 +83,7 @@ export async function simSettle(_prev: SimState, fd: FormData): Promise<SimState
   const p = z.object({ batch: z.string().min(5).max(60), short: z.coerce.number().min(-100000).max(100000).default(0) }).safeParse(Object.fromEntries(fd));
   if (!p.success) return { error: 'Choose a batch.' };
   const conn = await getConn();
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   const L = await loadState({ conn, bookId: book.id });
   const b = L.S.batches.get(p.data.batch);
   if (!b || b.ch === 'RA') return { error: 'No such channel batch.' };
@@ -104,7 +104,7 @@ export async function simAdvance(_prev: SimState, fd: FormData): Promise<SimStat
   await requireOps('/simulate');
   const days = Number(fd.get('days') ?? 1);
   const conn = await getConn();
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   try { await advanceClock(conn, book.id, days); } catch (e) { return { error: e instanceof Error ? e.message : 'Could not move the clock.' }; }
   revalidatePath('/', 'layout');
   return { ok: 'Moved the live book forward ' + days + ' day' + (days === 1 ? '' : 's') + '. Installments due in between are now processed.' };
@@ -129,7 +129,7 @@ export async function simRepeat(_prev: SimState, fd: FormData): Promise<SimState
   await requireOps('/simulate');
   const id = String(fd.get('raw') ?? '');
   const conn = await getConn();
-  const L = await loadState({ conn, kind: 'live' });
+  const L = await loadState({ conn });
   const re = L.S.raw.find(r => r.id === id);
   if (!re) return { error: 'Choose a payment to send again.' };
   const { results } = await ingestPayments([{ ch: re.ch, payload: re.payload }], conn);
@@ -141,7 +141,7 @@ export async function simRepeat(_prev: SimState, fd: FormData): Promise<SimState
 export async function simBroken(_prev: SimState, fd: FormData): Promise<SimState> {
   await requireOps('/simulate');
   const ch = (['EP', 'JC', 'CA', 'RA'] as const).find(c => c === fd.get('ch')) ?? 'JC';
-  const book = await currentBook(await getConn(), 'live');
+  const book = await currentBook(await getConn());
   const { day, min } = clockFor(book);
   const payload = paymentPayload({ ch, tid: newTid(ch), amount: 120000, phone: null, name: 'UNKNOWN', ref: '', status: 'success', day, min });
   payload[ch === 'EP' ? 'amount_pkr' : 'amount'] = 'twelve hundred';
@@ -155,7 +155,7 @@ export async function simDeposit(_prev: SimState, fd: FormData): Promise<SimStat
   await requireOps('/simulate');
   const p = z.object({ amount: z.coerce.number().positive('Enter an amount').max(1_000_000), narration: z.string().trim().min(2, 'Enter the bank narration').max(120) }).safeParse(Object.fromEntries(fd));
   if (!p.success) return { error: p.error.issues[0]?.message ?? 'Check the form.' };
-  const book = await currentBook(await getConn(), 'live');
+  const book = await currentBook(await getConn());
   const { day, min } = clockFor(book);
   const { results } = await ingestBank([{ day, min, amount: Math.round(p.data.amount * 100), ref: '', narration: p.data.narration, key: 'sim:deposit:' + randomInt(1e9), source: 'Simulator (bank)' }]);
   revalidatePath('/', 'layout');

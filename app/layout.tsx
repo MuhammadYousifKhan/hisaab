@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Atkinson_Hyperlegible, JetBrains_Mono, Noto_Nastaliq_Urdu, Schibsted_Grotesk } from 'next/font/google';
 import Link from 'next/link';
+import LogoMark from '@/components/Logo';
 import TopNav, { type NavItem } from '@/components/TopNav';
 import { getSession, viewBook } from '@/lib/auth/viewer';
 import { clockFor } from '@/lib/db/store';
@@ -35,6 +36,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <header className="topbar">
           <div className="topbar-in">
             <Link href="/" className="brand" style={{ textDecoration: 'none', color: 'inherit' }}>
+              <LogoMark size={30} className="brand-mark" />
               <span className="wordmark">Hisaab</span>
               <span className="wordmark-ur" lang="ur">حساب</span>
             </Link>

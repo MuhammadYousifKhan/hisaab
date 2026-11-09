@@ -32,7 +32,7 @@ export async function signIn(_prev: LoginState, fd: FormData): Promise<LoginStat
   const p = Form.safeParse(Object.fromEntries(fd));
   if (!p.success) return { error: 'Enter your phone number or username, and your PIN or password.' };
   const phone = normPhone(p.data.id);
-  const L = await loadState({ kind: 'live' });
+  const L = await loadState();
 
   if (isMobile(phone)) {
     const b = L.S.borrowers.find(x => normPhone(x.phone) === phone);

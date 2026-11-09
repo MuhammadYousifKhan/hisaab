@@ -5,7 +5,6 @@ import type { PayCh, PayStatus, RawEvent } from '@/lib/engine';
 import { CH, amtStr, parseStamp, stamp } from '@/lib/engine';
 
 export const SLUG_TO_CH: Record<string, PayCh> = { easypaisa: 'EP', jazzcash: 'JC', agent: 'CA', raast: 'RA' };
-export const CH_TO_SLUG: Record<PayCh, string> = { EP: 'easypaisa', JC: 'jazzcash', CA: 'agent', RA: 'raast' };
 
 export interface PaymentSpec {
   ch: PayCh; tid: string; amount: number; phone: string | null; name: string; ref: string;

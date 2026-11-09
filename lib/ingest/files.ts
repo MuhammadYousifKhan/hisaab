@@ -7,9 +7,6 @@ import { csvRecords } from './csv';
 
 export interface RowError { line: number; error: string }
 
-export const AGENT_COLUMNS = ['receipt_no', 'agent_id', 'customer_ref', 'customer_name', 'amount', 'status', 'collected_at'];
-export const BANK_COLUMNS = ['date', 'time', 'amount', 'narration', 'ref', 'bank_ref'];
-
 /** Agent CSV rows become payloads exactly as written; the adapter validates them later, like any channel. */
 export function agentRows(text: string): { payloads: Record<string, unknown>[]; errors: RowError[]; header: string[] } {
   const { header, rows } = csvRecords(text);

@@ -1,35 +1,23 @@
 // P3 · Matching: ingest raw channel events and bank lines, identify borrowers, settle batches,
 // raise typed exceptions, and apply recorded ops decisions and borrower reports.
-// build() and buildLive() are deterministic: the same inputs and actions always produce the same ledger.
+// buildLive() is deterministic: the same inputs and actions always produce the same ledger.
 import { normalize } from './adapters';
 import { CH, CLR, KCODE, OPS, SYS } from './data';
-import { generate } from './generate';
 import { makeLedger } from './ledger';
-import { scorecard } from './proof';
 import type {
-  Action, AcctCode, BankLine, Batch, BookKind, Borrower, BorrowerIn, Ch, Entry, EntryParams, ExKind, Exception, Installment, LiveInputs, Loan, LoanIn,
-  PayCh, RawEvent, State, Suggest, Truth, TruthTag, Txn,
+  Action, AcctCode, BankLine, Batch, Borrower, BorrowerIn, Ch, Entry, EntryParams, ExKind, Exception, Installment, LiveInputs, Loan, LoanIn,
+  PayCh, RawEvent, State, Suggest, Txn,
 } from './types';
-import { DEMO_TODAY, iso, normPhone } from './util';
+import { iso, normPhone } from './util';
 
-export interface Inputs { raw: RawEvent[]; bank: BankLine[] }
-
-interface Init {
-  kind: BookKind; seed: number; today: number; borrowers: Borrower[]; loans: Loan[]; insts: Installment[];
-  raw: RawEvent[]; bank: BankLine[]; truth: Truth[]; truthByTid: Map<string, TruthTag>;
-}
-function newState(o: Init): State {
-  const S: State = {
-    ...o,
+function newState(today: number, raw: RawEvent[], bank: BankLine[]): State {
+  return {
+    today, borrowers: [], loans: [], insts: [], raw, bank,
     ledger: makeLedger(), txns: new Map(), txnList: [], batches: new Map(), exceptions: [], exById: new Map(), notes: [],
     seenRaw: new Set(), seenBank: new Set(), ignored: [], quarantined: [], accepted: 0, rawById: new Map(), bankById: new Map(),
     reports: [], cur: 0,
     bById: new Map(), loanById: new Map(), loanByBid: new Map(), phoneIdx: new Map(), nameIdx: new Map(), nameDup: new Set(),
-    score: { rows: [], injected: 0, caught: 0, raised: 0, tp: 0, fp: 0, auto: 0, correct: 0 }, autoEntryCount: 0,
   };
-  for (const b of o.borrowers) indexBorrower(S, b);
-  for (const l of o.loans) { S.loanById.set(l.id, l); S.loanByBid.set(l.bid, l); }
-  return S;
 }
 /** Phone and name lookups. A name shared by two borrowers is never used for automatic matching. */
 function indexBorrower(S: State, b: Borrower) {
@@ -41,37 +29,7 @@ function indexBorrower(S: State, b: Borrower) {
   S.nameIdx.set(nn, b.id);
 }
 
-/** Demo book: the seeded scenario, frozen at 9 Nov 2026, with recorded decisions on top. */
-export function build(seed: number, actions: Action[] = [], inputs?: Inputs): State {
-  const G = generate(seed);
-  const S = newState({
-    kind: 'demo', seed, today: DEMO_TODAY, borrowers: G.borrowers, loans: G.loans, insts: G.insts,
-    raw: inputs ? inputs.raw : G.raw, bank: inputs ? inputs.bank : G.bank, truth: G.truth, truthByTid: G.truthByTid,
-  });
-  const TODAY = S.today;
-  type Ev = { day: number; min: number } & ({ k: 'disb'; L: Loan } | { k: 'due'; i: Installment } | { k: 'raw'; re: RawEvent } | { k: 'bank'; bl: BankLine });
-  const tl: Ev[] = [];
-  for (const L of S.loans) tl.push({ day: L.start, min: 0, k: 'disb', L });
-  for (const i of S.insts) if (i.due <= TODAY) tl.push({ day: i.due, min: 1, k: 'due', i });
-  for (const re of S.raw) tl.push({ day: re.day, min: re.min, k: 'raw', re });
-  for (const bl of S.bank) tl.push({ day: bl.day, min: bl.min, k: 'bank', bl });
-  tl.sort((a, b) => a.day - b.day || a.min - b.min);
-  for (const ev of tl) {
-    S.cur = ev.day;
-    if (ev.k === 'disb') onDisburse(S, ev.L);
-    else if (ev.k === 'due') onDue(S, ev.i);
-    else if (ev.k === 'raw') onRaw(S, ev.re);
-    else onBank(S, ev.bl);
-  }
-  S.cur = TODAY;
-  detectMissing(S);
-  S.score = scorecard(S);
-  S.autoEntryCount = S.ledger.entries.length;
-  for (const a of actions) applyAction(S, a);
-  return S;
-}
-
-/** Weekly schedule for a live loan. Whole-rupee installments; the last one takes the remainder. */
+/** Weekly schedule for a loan. Whole-rupee installments; the last one takes the remainder. */
 export function scheduleFor(l: Pick<LoanIn, 'id' | 'bid' | 'principal' | 'fee' | 'n' | 'firstDue'>): { loan: Omit<Loan, 'start'>; insts: Installment[] } {
   const total = l.principal + l.fee;
   const instAmt = Math.floor(total / l.n / 100) * 100;
@@ -84,12 +42,12 @@ export function scheduleFor(l: Pick<LoanIn, 'id' | 'bid' | 'principal' | 'fee' |
 }
 
 /**
- * Live book: borrowers, loans, channel events, bank lines and decisions as they actually arrived.
+ * The book: borrowers, loans, channel events, bank lines and decisions as they actually arrived.
  * Everything is replayed in arrival order (ord), and installment due dates are processed at the start
  * of their day, so a stored journal is always a prefix of any later replay.
  */
 export function buildLive(inp: LiveInputs): State {
-  const S = newState({ kind: 'live', seed: 0, today: inp.today, borrowers: [], loans: [], insts: [], raw: inp.raw, bank: inp.bank, truth: [], truthByTid: new Map() });
+  const S = newState(inp.today, inp.raw, inp.bank);
   type It = { ord: number; day: number } & ({ k: 'b'; b: BorrowerIn } | { k: 'l'; l: LoanIn } | { k: 'raw'; re: RawEvent } | { k: 'bank'; bl: BankLine } | { k: 'act'; a: Action });
   const items: It[] = [];
   for (const b of inp.borrowers) items.push({ ord: b.ord, day: b.recvDay, k: 'b', b });
@@ -140,9 +98,6 @@ export function buildLive(inp: LiveInputs): State {
   flush(S.today);
   S.cur = S.today;
   detectMissing(S);
-  const auto = S.txnList.filter(t => t.autoRule);
-  S.score = { rows: [], injected: 0, caught: 0, raised: S.exceptions.filter(e => e.kind !== 'borrower_report').length, tp: 0, fp: 0, auto: auto.length, correct: 0 };
-  S.autoEntryCount = S.ledger.entries.filter(e => !e.actor.startsWith('ops')).length;
   return S;
 }
 
@@ -234,7 +189,7 @@ function identify(S: State, t: Txn): Ident {
 function newTxn(o: Pick<Txn, 'tid' | 'ch' | 'day' | 'min' | 'amount' | 'phone' | 'name' | 'ref' | 'status' | 'failReason' | 'rawId'> & Partial<Txn>): Txn {
   return {
     borrowerId: null, rule: null, conf: 0, autoRule: null, autoBid: null, state: null, batchId: null, settled: false, settleDay: null,
-    batchLate: false, exId: null, suggest: null, reversed: null, entries: [], truthBid: null, heldOnce: false, ...o,
+    batchLate: false, exId: null, suggest: null, reversed: null, entries: [], heldOnce: false, ...o,
   };
 }
 
@@ -243,8 +198,6 @@ function onPayment(S: State, c: Extract<ReturnType<typeof normalize>, { type: 'p
   const prev = S.txns.get(c.tid);
   if (prev && prev.state === 'pending' && c.status !== 'pending') S.txnList.splice(S.txnList.indexOf(prev), 1);
   const t = newTxn({ tid: c.tid, ch: c.ch, day: c.day, min: c.min, amount: c.amount, phone: c.phone, name: c.name || null, ref: c.ref || '', status: c.status, failReason: c.failReason, rawId: c.rawId });
-  const tr = S.truthByTid.get(t.tid);
-  t.truthBid = tr ? tr.bid : null;
   S.txns.set(t.tid, t);
   S.txnList.push(t);
   const id = identify(S, t);
@@ -378,8 +331,6 @@ function onBank(S: State, bl: BankLine) {
   // A batch that holds only clawbacks can't be settled by a bank credit; such a credit is held like any unknown deposit.
   if (b && !b.settled && b.gross - b.clawback > 0) return settleBatch(S, b, bl);
   const t = newTxn({ tid: bl.id, ch: 'BR', day: bl.day, min: bl.min, amount: bl.amount, phone: null, name: null, ref: bl.narration, status: 'success', failReason: null, rawId: bl.id, settled: true, settleDay: bl.day });
-  const tr = S.truthByTid.get(bl.id);
-  t.truthBid = tr ? tr.bid : null;
   S.txns.set(t.tid, t);
   S.txnList.push(t);
   hold(S, t, '1000', 'unexpected_deposit', { lineId: bl.id });
@@ -395,7 +346,7 @@ function settleBatch(S: State, b: Batch, bl: BankLine) {
   if (diff < 0) lines.push({ acct: '2100', cr: -diff });
   const reason = diff > 0 ? 'SETTLEMENT_SHORT' : diff < 0 ? 'SETTLEMENT_OVER' : 'SETTLEMENT';
   const e = S.ledger.post({ day: S.cur, reason, params: { batch: b.id, ch: b.ch, batchDay: b.day, count: b.txns.length, gross: b.gross, fee, bps: CH[b.ch].bps, clawback: b.clawback, net: bl.amount, expectedNet, diff, line: bl.id }, lines, src: [b.id, bl.id], actor: SYS });
-  // A settlement that was flagged as missing (live books flag as they go) closes that review item.
+  // A settlement that was flagged as missing closes that review item.
   const missing = b.exId ? S.exById.get(b.exId) : undefined;
   if (missing && missing.kind === 'missing_deposit' && missing.status !== 'resolved') {
     missing.status = 'resolved';

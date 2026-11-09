@@ -1,17 +1,16 @@
 // Event-sourced storage. Borrowers, loans, channel events, bank lines and human decisions are stored as received;
 // the journal is a deterministic projection of them, written append-only with a content hash per entry.
-// Every input to a live book gets an arrival number (ord) under a row lock on the book, so committed inputs
+// Every input to a book gets an arrival number (ord) under a row lock on the book, so committed inputs
 // are always a prefix in arrival order and replays never rewrite what is already stored.
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { ACCTS, DEMO_TODAY, OPS, build, buildLive, explain, generate, pktNow, replayFiles } from '@/lib/engine';
-import type { Action, AcctCode, BankLine, BookKind, BorrowerIn, Entry, LoanIn, PayCh, RawEvent, State } from '@/lib/engine';
+import { ACCTS, OPS, buildLive, explain, pktNow, replayFiles } from '@/lib/engine';
+import type { Action, AcctCode, BankLine, BorrowerIn, Entry, LoanIn, PayCh, RawEvent, State } from '@/lib/engine';
 import { rawEventFor } from '@/lib/ingest/payloads';
 import { getConn, type Conn } from './client';
 import { APPEND_ONLY, actions, bankLines, books, borrowerLogins, borrowers, journalEntries, journalLines, loans, rawEvents } from './schema';
 
-export const DEFAULT_SEED = 2026;
-export interface Book { id: number; seed: number; kind: BookKind; nextOrd: number; clockOffset: number }
+export interface Book { id: number; nextOrd: number; clockOffset: number }
 export interface SyncResult { stored: number; inserted: number; mismatched: string[]; extra: string[] }
 export interface Loaded { S: State; book: Book; conn: Conn; sync: SyncResult; actionCount: number }
 export interface Clock { day: number; min: number }
@@ -24,27 +23,14 @@ export function entryHash(e: Entry): string {
 }
 
 /* ---------------- Books ---------------- */
-const bookCols = { id: books.id, seed: books.seed, kind: books.kind, nextOrd: books.nextOrd, clockOffset: books.clockOffset };
-const toBook = (r: { id: number; seed: number; kind: string; nextOrd: number; clockOffset: number }): Book =>
-  ({ id: r.id, seed: r.seed, kind: r.kind === 'live' ? 'live' : 'demo', nextOrd: Number(r.nextOrd), clockOffset: Number(r.clockOffset) });
+// Older databases may also hold books of another kind from early versions; only 'live' books are ever used.
+const LIVE = eq(books.kind, 'live');
+const bookCols = { id: books.id, nextOrd: books.nextOrd, clockOffset: books.clockOffset };
+const toBook = (r: { id: number; nextOrd: number; clockOffset: number }): Book => ({ id: r.id, nextOrd: Number(r.nextOrd), clockOffset: Number(r.clockOffset) });
 
-/** Today in a book: demo books are frozen on 9 Nov 2026; live books follow Pakistan time plus any simulator offset. */
-export function clockFor(book: Pick<Book, 'kind' | 'clockOffset'>, now: Clock = pktNow()): Clock {
-  return book.kind === 'live' ? { day: now.day + book.clockOffset, min: now.min } : { day: DEMO_TODAY, min: 12 * 60 };
-}
-
-export async function createBook(conn: Conn, seed: number): Promise<Book> {
-  const G = generate(seed);
-  return conn.db.transaction(async tx => {
-    const [b] = await tx.insert(books).values({ seed, kind: 'demo' }).returning(bookCols);
-    for (const part of chunk(G.raw, 200)) {
-      await tx.insert(rawEvents).values(part.map(r => ({ bookId: b.id, id: r.id, source: r.src, channel: r.ch, day: r.day, minute: r.min, txnId: r.tid, idempotencyKey: r.key, redelivery: r.redelivery ? 1 : 0, payload: r.payload })));
-    }
-    for (const part of chunk(G.bank, 200)) {
-      await tx.insert(bankLines).values(part.map(l => ({ bookId: b.id, id: l.id, day: l.day, minute: l.min, amountPaisa: l.amount, narration: l.narration, ref: l.ref, idempotencyKey: l.id, source: 'Generator' })));
-    }
-    return toBook(b);
-  });
+/** Today in a book: Pakistan time, plus any days the simulator has moved it forward. */
+export function clockFor(book: Pick<Book, 'clockOffset'>, now: Clock = pktNow()): Clock {
+  return { day: now.day + book.clockOffset, min: now.min };
 }
 
 export async function createLiveBook(conn: Conn): Promise<Book> {
@@ -52,22 +38,21 @@ export async function createLiveBook(conn: Conn): Promise<Book> {
   return toBook(b);
 }
 
-/** The newest book of a kind, created on first use (an empty live book, or the seed-2026 demo). */
-export async function currentBook(conn: Conn, kind: BookKind = 'demo'): Promise<Book> {
-  const [b] = await conn.db.select(bookCols).from(books).where(eq(books.kind, kind)).orderBy(desc(books.id)).limit(1);
-  if (b) return toBook(b);
-  return kind === 'live' ? createLiveBook(conn) : createBook(conn, DEFAULT_SEED);
+/** The book in use: the newest one, created empty on first use. */
+export async function currentBook(conn: Conn): Promise<Book> {
+  const [b] = await conn.db.select(bookCols).from(books).where(LIVE).orderBy(desc(books.id)).limit(1);
+  return b ? toBook(b) : createLiveBook(conn);
 }
 
 export async function getBook(conn: Conn, id: number): Promise<Book | null> {
-  const [b] = await conn.db.select(bookCols).from(books).where(eq(books.id, id)).limit(1);
+  const [b] = await conn.db.select(bookCols).from(books).where(and(eq(books.id, id), LIVE)).limit(1);
   return b ? toBook(b) : null;
 }
 
 /** Simulator only: move a live book's clock forward. It can never go back, so stored history stays valid. */
 export async function advanceClock(conn: Conn, bookId: number, days = 1): Promise<void> {
   if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Advance by 1 to 14 days');
-  await conn.db.update(books).set({ clockOffset: sql`${books.clockOffset} + ${days}` }).where(and(eq(books.id, bookId), eq(books.kind, 'live')));
+  await conn.db.update(books).set({ clockOffset: sql`${books.clockOffset} + ${days}` }).where(and(eq(books.id, bookId), LIVE));
 }
 
 /* ---------------- Writing inputs ---------------- */
@@ -77,7 +62,7 @@ interface Locked { tx: Tx; book: Book; recv: Clock; take: (n: number) => number 
 /** Run fn with the book row locked. take(n) hands out the next n arrival numbers. */
 async function withBook<T>(conn: Conn, bookId: number, fn: (L: Locked) => Promise<T>): Promise<T> {
   return conn.db.transaction(async tx => {
-    const [row] = await tx.select(bookCols).from(books).where(eq(books.id, bookId)).for('update');
+    const [row] = await tx.select(bookCols).from(books).where(and(eq(books.id, bookId), LIVE)).for('update');
     if (!row) throw new Error('Book ' + bookId + ' not found');
     const book = toBook(row);
     let next = book.nextOrd;
@@ -89,11 +74,10 @@ async function withBook<T>(conn: Conn, bookId: number, fn: (L: Locked) => Promis
 }
 
 export async function appendAction(conn: Conn, bookId: number, action: Action): Promise<number> {
-  return withBook(conn, bookId, async ({ tx, book, recv, take }) => {
+  return withBook(conn, bookId, async ({ tx, recv, take }) => {
     const [{ seq }] = await tx.select({ seq: sql<number>`COALESCE(MAX(${actions.seq}), 0) + 1` }).from(actions).where(eq(actions.bookId, bookId));
     const ord = take(1);
-    const payload: Action = { ...action, at: action.at ?? recv.day };
-    if (book.kind === 'live') payload.ord = ord;
+    const payload: Action = { ...action, at: action.at ?? recv.day, ord };
     const actor = action.type === 'report' ? 'borrower: ' + action.bid : action.by || OPS;
     await tx.insert(actions).values({ bookId, seq: Number(seq), kind: action.type, payload, actor, ord });
     return Number(seq);
@@ -154,10 +138,9 @@ export async function appendBank(conn: Conn, bookId: number, lines: BankIn[]): P
 
 export interface NewBorrower { name: string; nameUr: string; phone: string; work: string; workUr: string; city: string; ch: PayCh }
 
-/** Add a borrower to a live book with a sign-in PIN hash. Returns the new ID, or 'phone' if the number is taken. */
-export async function appendBorrower(conn: Conn, bookId: number, b: NewBorrower, pinHash: string, by: string): Promise<{ id: string } | { error: 'phone' | 'book' }> {
-  return withBook(conn, bookId, async ({ tx, book, recv, take }) => {
-    if (book.kind !== 'live') return { error: 'book' as const };
+/** Add a borrower with a sign-in PIN hash. Returns the new ID, or 'phone' if the number is taken. */
+export async function appendBorrower(conn: Conn, bookId: number, b: NewBorrower, pinHash: string, by: string): Promise<{ id: string } | { error: 'phone' }> {
+  return withBook(conn, bookId, async ({ tx, recv, take }) => {
     const [dupe] = await tx.select({ id: borrowers.id }).from(borrowers).where(and(eq(borrowers.bookId, bookId), eq(borrowers.phone, b.phone))).limit(1);
     if (dupe) return { error: 'phone' as const };
     const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(borrowers).where(eq(borrowers.bookId, bookId));
@@ -170,10 +153,9 @@ export async function appendBorrower(conn: Conn, bookId: number, b: NewBorrower,
 
 export interface NewLoan { bid: string; principal: number; fee: number; n: number; firstDue: number }
 
-/** Issue a loan in a live book. The disbursement entry is posted by the engine on the day it is issued. */
-export async function appendLoan(conn: Conn, bookId: number, l: NewLoan, by: string): Promise<{ id: string } | { error: 'borrower' | 'has_loan' | 'due' | 'book' }> {
-  return withBook(conn, bookId, async ({ tx, book, recv, take }) => {
-    if (book.kind !== 'live') return { error: 'book' as const };
+/** Issue a loan. The disbursement entry is posted by the engine on the day it is issued. */
+export async function appendLoan(conn: Conn, bookId: number, l: NewLoan, by: string): Promise<{ id: string } | { error: 'borrower' | 'has_loan' | 'due' }> {
+  return withBook(conn, bookId, async ({ tx, recv, take }) => {
     if (l.firstDue <= recv.day) return { error: 'due' as const };
     const [b] = await tx.select({ id: borrowers.id }).from(borrowers).where(and(eq(borrowers.bookId, bookId), eq(borrowers.id, l.bid))).limit(1);
     if (!b) return { error: 'borrower' as const };
@@ -242,14 +224,14 @@ async function syncLedger(conn: Conn, bookId: number, S: State): Promise<SyncRes
 
 const g = globalThis as unknown as { __hisaabCache?: Map<number, { key: string; S: State; sync: SyncResult; actionCount: number }> };
 
-export interface LoadOpts { conn?: Conn; kind?: BookKind; bookId?: number }
+export interface LoadOpts { conn?: Conn; bookId?: number }
 const isConn = (x: unknown): x is Conn => !!x && typeof x === 'object' && 'db' in x && 'exec' in x;
 
-/** Build (or reuse) the state of a book. Defaults to the newest demo book. */
+/** Build (or reuse) the state of a book. Defaults to the book in use. */
 export async function loadState(arg?: Conn | LoadOpts): Promise<Loaded> {
   const o: LoadOpts = isConn(arg) ? { conn: arg } : arg ?? {};
   const conn = o.conn ?? (await getConn());
-  const book = (o.bookId ? await getBook(conn, o.bookId) : null) ?? (await currentBook(conn, o.kind ?? 'demo'));
+  const book = (o.bookId ? await getBook(conn, o.bookId) : null) ?? (await currentBook(conn));
   const today = clockFor(book).day;
   const key = conn.where + '|' + book.id + '|' + book.nextOrd + '|' + today;
   if (!g.__hisaabCache) g.__hisaabCache = new Map();
@@ -257,9 +239,7 @@ export async function loadState(arg?: Conn | LoadOpts): Promise<Loaded> {
   if (!c || c.key !== key) {
     const acts = await loadActions(conn, book.id);
     const inputs = await loadChannelInputs(conn, book.id);
-    const S = book.kind === 'live'
-      ? buildLive({ today, ...(await loadPeople(conn, book.id)), ...inputs, actions: acts })
-      : build(book.seed, acts, inputs);
+    const S = buildLive({ today, ...(await loadPeople(conn, book.id)), ...inputs, actions: acts });
     const sync = await syncLedger(conn, book.id, S);
     c = { key, S, sync, actionCount: acts.length };
     g.__hisaabCache.set(book.id, c);
@@ -321,7 +301,7 @@ export async function dbChecks(L: Loaded): Promise<DbCheck[]> {
   return out;
 }
 
-export async function dbTryUnbalanced(conn: Conn, bookId: number, day: number = DEMO_TODAY): Promise<{ ok: boolean; msg: string }> {
+export async function dbTryUnbalanced(conn: Conn, bookId: number, day: number): Promise<{ ok: boolean; msg: string }> {
   const id = 'JE-TEST-' + Date.now();
   try {
     await conn.db.transaction(async tx => {

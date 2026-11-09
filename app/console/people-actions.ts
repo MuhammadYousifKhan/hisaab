@@ -39,10 +39,10 @@ export async function addBorrower(_prev: FormState, fd: FormData): Promise<FormS
   if (!isMobile(phone)) return { error: 'Enter a Pakistani mobile number like 0300 1234567.' };
   const conn = await getConn();
   const book = await getBook(conn, p.data.bookId);
-  if (!book || book.kind !== 'live') return { error: 'Borrowers can only be added to the live book.' };
+  if (!book) return { error: 'Unknown book.' };
   const pin = p.data.pin || newPin();
   const r = await appendBorrower(conn, book.id, { name: p.data.name, nameUr: p.data.nameUr, phone, work: p.data.work, workUr: p.data.workUr, city: p.data.city, ch: p.data.ch }, await hashSecret(pin), actorName(s));
-  if ('error' in r) return { error: r.error === 'phone' ? 'Another borrower already has ' + phone + '.' : 'Borrowers can only be added to the live book.' };
+  if ('error' in r) return { error: 'Another borrower already has ' + phone + '.' };
   const L = await loadState({ conn, bookId: book.id });
   const same = L.S.borrowers.filter(b => b.id !== r.id && normName(b.name) === normName(p.data.name));
   revalidatePath('/', 'layout');
@@ -69,14 +69,14 @@ export async function issueLoan(_prev: FormState, fd: FormData): Promise<FormSta
   if (fee > principal / 2) return { error: 'The service charge can be at most half the principal.' };
   const conn = await getConn();
   const book = await getBook(conn, bookId);
-  if (!book || book.kind !== 'live') return { error: 'Loans can only be issued in the live book.' };
+  if (!book) return { error: 'Unknown book.' };
   const today = clockFor(book).day;
   const firstDue = dayFromIso(p.data.firstDue);
   if (firstDue === null) return { error: 'Choose the first due date.' };
   if (firstDue <= today || firstDue > today + 60) return { error: 'The first installment must fall due between tomorrow and 60 days from today.' };
   const r = await appendLoan(conn, book.id, { bid, principal: principal * 100, fee: fee * 100, n, firstDue }, actorName(s));
   if ('error' in r) {
-    const msg = { borrower: 'That borrower is not in this book.', has_loan: 'That borrower already has a loan.', due: 'The first installment must fall due after today.', book: 'Loans can only be issued in the live book.' }[r.error];
+    const msg = { borrower: 'That borrower is not in this book.', has_loan: 'That borrower already has a loan.', due: 'The first installment must fall due after today.' }[r.error];
     return { error: msg };
   }
   revalidatePath('/', 'layout');
@@ -129,7 +129,7 @@ export async function approveApp(fd: FormData): Promise<void> {
   if (fee > principal / 2) redirect(back({ err: 'The service charge can be at most half the principal.' }));
   const conn = await getConn();
   const book = await getBook(conn, bookId);
-  if (!book || book.kind !== 'live') redirect(back({ err: 'Unknown book.' }));
+  if (!book) redirect(back({ err: 'Unknown book.' }));
   const today = clockFor(book).day;
   const firstDue = dayFromIso(p.data.firstDue);
   if (firstDue === null || firstDue <= today || firstDue > today + 60) redirect(back({ err: 'The first installment must fall due between tomorrow and 60 days from today.' }));

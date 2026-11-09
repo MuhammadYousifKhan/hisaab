@@ -3,13 +3,13 @@
 import { bigint, integer, jsonb, pgTable, primaryKey, serial, text, timestamp } from 'drizzle-orm/pg-core';
 
 /**
- * A book is one ledger. Demo books are generated from a seed and frozen on 9 Nov 2026; live books start
- * empty and follow the real clock. next_ord numbers every input that reaches a book, in arrival order.
+ * A book is one ledger. It starts empty and follows the real clock (plus any simulator offset).
+ * next_ord numbers every input that reaches a book, in arrival order. seed and kind are kept for older databases.
  */
 export const books = pgTable('books', {
   id: serial('id').primaryKey(),
   seed: integer('seed').notNull(),
-  kind: text('kind').notNull().default('demo'),
+  kind: text('kind').notNull().default('live'),
   nextOrd: bigint('next_ord', { mode: 'number' }).notNull().default(0),
   clockOffset: integer('clock_offset').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -21,7 +21,7 @@ export const accounts = pgTable('accounts', {
   type: text('type').notNull(),
 });
 
-/** Borrowers entered by lender staff (live books). Append-only. */
+/** Borrowers, opened by staff or by approving an application. Append-only. */
 export const borrowers = pgTable('borrowers', {
   bookId: integer('book_id').notNull(),
   id: text('id').notNull(),
@@ -38,7 +38,7 @@ export const borrowers = pgTable('borrowers', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.bookId, t.id] })]);
 
-/** Loans issued by lender staff (live books). Append-only; one loan per borrower. */
+/** Loans issued by staff. Append-only; one loan per borrower. */
 export const loans = pgTable('loans', {
   bookId: integer('book_id').notNull(),
   id: text('id').notNull(),
@@ -130,7 +130,7 @@ export const staff = pgTable('staff', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Borrower sign-in PINs for live books. Mutable (PIN resets, lockouts). */
+/** Borrower sign-in PINs. Mutable (PIN resets, lockouts). */
 export const borrowerLogins = pgTable('borrower_logins', {
   bookId: integer('book_id').notNull(),
   borrowerId: text('borrower_id').notNull(),
@@ -166,7 +166,7 @@ export const APPEND_ONLY = ['raw_events', 'bank_lines', 'actions', 'journal_entr
 
 export const DDL = `
 CREATE TABLE IF NOT EXISTS books (id serial PRIMARY KEY, seed integer NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
-ALTER TABLE books ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'demo';
+ALTER TABLE books ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'live';
 ALTER TABLE books ADD COLUMN IF NOT EXISTS next_ord bigint NOT NULL DEFAULT 0;
 ALTER TABLE books ADD COLUMN IF NOT EXISTS clock_offset integer NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS accounts (code text PRIMARY KEY, name text NOT NULL, type text NOT NULL);

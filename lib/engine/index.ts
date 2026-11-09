@@ -1,12 +1,10 @@
 export * from './types';
 export * from './util';
 export * from './data';
-export { generate } from './generate';
 export { normalize } from './adapters';
 export { makeLedger } from './ledger';
-export { build, buildLive, bankKey, replayFiles, normName, scheduleFor } from './pipeline';
-export type { Inputs } from './pipeline';
+export { buildLive, bankKey, replayFiles, normName, scheduleFor } from './pipeline';
 export { explain } from './explain';
-export { runChecks, scorecard, tryUnbalanced } from './proof';
+export { runChecks, tryUnbalanced } from './proof';
 export type { Check } from './proof';
 export * from './views';

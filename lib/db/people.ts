@@ -1,6 +1,6 @@
 // Staff accounts and borrower sign-in PINs. These are the only mutable records: passwords change and
 // failed sign-ins lock an account for a while. Nothing here touches the ledger.
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { hashSecret, verifySecret } from '@/lib/auth/password';
 import type { Conn } from './client';
 import { borrowerLogins, staff } from './schema';
@@ -57,9 +57,4 @@ export async function resetBorrowerPin(conn: Conn, bookId: number, bid: string, 
   const res = await conn.db.update(borrowerLogins).set({ pinHash, failed: 0, lockedUntil: null, updatedAt: new Date() })
     .where(and(eq(borrowerLogins.bookId, bookId), eq(borrowerLogins.borrowerId, bid))).returning({ id: borrowerLogins.borrowerId });
   return res.length > 0;
-}
-
-export async function staffCount(conn: Conn): Promise<number> {
-  const [{ n }] = await conn.db.select({ n: sql<number>`count(*)::int` }).from(staff);
-  return Number(n);
 }

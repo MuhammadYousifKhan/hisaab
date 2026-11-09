@@ -43,7 +43,7 @@ export async function approveApplication(conn: Conn, bookId: number, id: number,
   const [a] = await conn.db.select().from(applications).where(and(eq(applications.bookId, bookId), eq(applications.id, id))).limit(1);
   if (!a || a.status !== 'pending') return { error: 'That application was already decided.' };
   const b = await appendBorrower(conn, bookId, { name: a.name, nameUr: '', phone: a.phone, work: a.work, workUr: '', city: a.city, ch: a.channel as PayCh }, a.pinHash, by);
-  if ('error' in b) return { error: b.error === 'phone' ? 'A borrower with this phone number already exists.' : 'Applications can only be approved in the live book.' };
+  if ('error' in b) return { error: 'A borrower with this phone number already exists.' };
   const l = await appendLoan(conn, bookId, { ...loan, bid: b.id }, by);
   await conn.db.update(applications).set({ status: 'approved', borrowerId: b.id, decidedBy: by, decidedAt: new Date() }).where(eq(applications.id, id));
   if ('error' in l) return { error: 'Account ' + b.id + ' opened, but the loan was not issued (' + l.error + '). Issue it from the loan form.' };

@@ -1,8 +1,19 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { borrowerSummary, buildLive, explain, iso, mulberry32, replayFiles, runChecks } from '@/lib/engine';
+import { borrowerSummary, buildLive, explain, iso, replayFiles, runChecks } from '@/lib/engine';
 import type { Action, LiveInputs, PayCh, PayStatus, State } from '@/lib/engine';
 import { paymentPayload, rawEventFor, reversalPayload, type PaymentSpec } from '@/lib/ingest/payloads';
+
+/** Small seeded random generator, so every property-test case can be replayed from its seed. */
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 const failing = (S: State) => runChecks(S).filter(c => !c.pass).map(c => c.title + ': ' + c.value);
 const fingerprint = (S: State) => S.ledger.entries.map(e => JSON.stringify([e.id, e.day, e.reason, e.params, e.lines, e.src, e.actor, e.reverses, explain(e, 'en')]));

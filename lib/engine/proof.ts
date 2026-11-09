@@ -1,49 +1,8 @@
-// P1 · Ledger proof: invariant checks recomputed from scratch, and a scorecard comparing
-// the generator's planted anomalies with what the matcher did on its own.
-import { CLEARING, TRUTH_LABEL } from './data';
+// Ledger proof: invariant checks recomputed from scratch.
+import { CLEARING } from './data';
 import { explain } from './explain';
-import type { ExKind, Score, ScoreRow, State, Truth, TruthKind } from './types';
+import type { State } from './types';
 import { fmtRs } from './util';
-
-const EXMAP: Partial<Record<TruthKind, ExKind>> = {
-  orphan: 'orphan_payment', wrong_reference: 'reference_conflict', possible_duplicate: 'possible_duplicate', reversal: 'reversal',
-  unexpected_deposit: 'unexpected_deposit', missing_deposit: 'missing_deposit', short_settlement: 'settlement_short',
-};
-
-function detect(S: State, tr: Truth): boolean {
-  const ent = (tid: string) => S.ledger.entries.filter(e => e.src[0] === tid);
-  const exKind = EXMAP[tr.kind];
-  if (exKind) return S.exceptions.some(e => e.kind === exKind && e.key === tr.key);
-  const t = S.txns.get(tr.key);
-  switch (tr.kind) {
-    case 'duplicate_delivery': return S.ignored.some(r => 'tid' in r && r.tid === tr.key) && S.txnList.filter(x => x.tid === tr.key).length === 1;
-    case 'failed': return !!t && t.state === 'failed' && ent(tr.key).length === 0;
-    case 'pending': return !!t && t.state === 'pending' && ent(tr.key).length === 0;
-    case 'partial': return ent(tr.key).some(e => e.reason === 'PARTIAL_PAYMENT');
-    case 'overpayment': return ent(tr.key).some(e => e.lines.some(l => l.acct === '2000' && l.cr > 0));
-    default: return false;
-  }
-}
-
-export function scorecard(S: State): Score {
-  const rows = new Map<TruthKind, ScoreRow>();
-  for (const tr of S.truth) {
-    let r = rows.get(tr.kind);
-    if (!r) { r = { kind: tr.kind, label: TRUTH_LABEL[tr.kind][0], how: TRUTH_LABEL[tr.kind][1], injected: 0, caught: 0 }; rows.set(tr.kind, r); }
-    r.injected++;
-    if (detect(S, tr)) r.caught++;
-  }
-  const keys = new Set(S.truth.filter(t => EXMAP[t.kind]).map(t => EXMAP[t.kind] + '|' + t.key));
-  const raised = S.exceptions.filter(e => e.kind !== 'borrower_report');
-  const tp = raised.filter(e => keys.has(e.kind + '|' + e.key)).length;
-  const auto = S.txnList.filter(t => t.autoRule);
-  const correct = auto.filter(t => t.autoBid === t.truthBid).length;
-  const list = Array.from(rows.values());
-  return {
-    rows: list, injected: list.reduce((s, r) => s + r.injected, 0), caught: list.reduce((s, r) => s + r.caught, 0),
-    raised: raised.length, tp, fp: raised.length - tp, auto: auto.length, correct,
-  };
-}
 
 export interface Check { title: string; detail: string; pass: boolean; value: string }
 

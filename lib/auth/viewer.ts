@@ -8,7 +8,6 @@ import { currentBook, getBook, loadState, type Book, type Loaded } from '@/lib/d
 import { SESSION_COOKIE, signSession, verifySession, type Session } from './session';
 
 export type OpsSession = Extract<Session, { role: 'ops' }>;
-export type BorrowerSession = Extract<Session, { role: 'borrower' }>;
 
 const secure = process.env.NODE_ENV === 'production';
 
@@ -28,15 +27,15 @@ export async function clearSession(): Promise<void> {
 export async function viewBook(session?: Session | null): Promise<Book> {
   const s = session === undefined ? await getSession() : session;
   const conn = await getConn();
-  if (s?.role === 'borrower') return (await getBook(conn, s.bookId)) ?? currentBook(conn, 'live');
-  return currentBook(conn, 'live');
+  if (s?.role === 'borrower') return (await getBook(conn, s.bookId)) ?? currentBook(conn);
+  return currentBook(conn);
 }
 
 /** The state a viewer should see: a borrower sees their own book; everyone else the live book. */
 export async function loadView(session?: Session | null): Promise<Loaded> {
   const s = session === undefined ? await getSession() : session;
   if (s?.role === 'borrower') return loadState({ bookId: s.bookId });
-  return loadState({ kind: 'live' });
+  return loadState();
 }
 
 const safeNext = (next?: string) => (next && next.startsWith('/') && !next.startsWith('//') ? next : '/');

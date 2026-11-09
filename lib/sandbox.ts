@@ -18,7 +18,7 @@ export interface SandboxResult { tag: string; borrowers: { id: string; name: str
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 export async function runSandbox(conn: Conn, by: string): Promise<SandboxResult> {
-  const book = await currentBook(conn, 'live');
+  const book = await currentBook(conn);
   const clock = clockFor(book);
   const S0 = (await loadState({ conn, bookId: book.id })).S;
   const tag = Array.from({ length: 3 }, () => LETTERS[randomInt(LETTERS.length)]).join('');

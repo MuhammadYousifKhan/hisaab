@@ -1,9 +1,7 @@
 import type { Lang } from './types';
 
 // Day 0 is 1 Sep 2026. Days and minutes are counted in Pakistan time (UTC+5, no daylight saving).
-// The demo scenario is frozen at day 69, 9 Nov 2026; live books follow the real clock.
 export const DAY0 = Date.UTC(2026, 8, 1);
-export const DEMO_TODAY = 69;
 const MS = 86400000;
 const PKT = 5 * 3600000;
 
@@ -87,14 +85,3 @@ export const amtStr = (p: number) => Math.floor(p / 100) + '.' + String(p % 100)
 export const maskPhone = (p: string | null | undefined) => (p ? p.slice(0, 4) + '-•••' + p.slice(-4) : '—');
 /** Isolate a left-to-right fragment (phone, reference) inside an Urdu sentence. */
 export const LTR = (s: string) => '⁦' + s + '⁩';
-
-/** Deterministic PRNG so the same seed always produces the same scenario. */
-export function mulberry32(seed: number): () => number {
-  let a = seed;
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
