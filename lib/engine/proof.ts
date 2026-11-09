@@ -3,7 +3,7 @@
 import { CLEARING, TRUTH_LABEL } from './data';
 import { explain } from './explain';
 import type { ExKind, Score, ScoreRow, State, Truth, TruthKind } from './types';
-import { TODAY, fmtRs } from './util';
+import { fmtRs } from './util';
 
 const EXMAP: Partial<Record<TruthKind, ExKind>> = {
   orphan: 'orphan_payment', wrong_reference: 'reference_conflict', possible_duplicate: 'possible_duplicate', reversal: 'reversal',
@@ -108,7 +108,7 @@ export function runChecks(S: State): Check[] {
 export function tryUnbalanced(S: State): { ok: boolean; msg: string } {
   const before = S.ledger.entries.length;
   try {
-    S.ledger.post({ day: TODAY, reason: 'TEST_UNBALANCED', lines: [{ acct: '1000', dr: 1000000 }, { acct: '2100', cr: 990000 }], actor: 'proof: test' });
+    S.ledger.post({ day: S.today, reason: 'TEST_UNBALANCED', lines: [{ acct: '1000', dr: 1000000 }, { acct: '2100', cr: 990000 }], actor: 'proof: test' });
     return { ok: false, msg: 'The ledger accepted an unbalanced entry. This is a bug.' };
   } catch (err) {
     return { ok: S.ledger.entries.length === before, msg: err instanceof Error ? err.message : String(err) };

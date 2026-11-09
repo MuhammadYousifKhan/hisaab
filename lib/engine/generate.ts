@@ -1,8 +1,8 @@
 // P2 · Data: seeded synthetic scenario. The same seed always gives the same month of payments.
 // Scripted stories (Ali, Shazia, Bilal...) carry the challenge's edge cases; the seed adds random noise on top.
 import { CH, FAILS, MISSING_BATCH, PEOPLE, SHORT_BATCH, STRANGERS } from './data';
-import type { BankLine, Borrower, Generated, Installment, Loan, PayCh, PayStatus, RawEvent, Truth, TruthKind, TruthTag } from './types';
-import { TODAY, amtStr, iso, mulberry32, stamp } from './util';
+import type { BankLine, Generated, Installment, Loan, PayCh, PayStatus, Person, RawEvent, Truth, TruthKind, TruthTag } from './types';
+import { DEMO_TODAY as TODAY, amtStr, iso, mulberry32, stamp } from './util';
 
 interface PaySpec {
   tid: string; ch: PayCh; day: number; min: number; amt: number; phone: string | null; name: string; ref: string;
@@ -18,7 +18,7 @@ export function generate(seed: number): Generated {
   const rnd = mulberry32(seed >>> 0 || 1);
   const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
   const pick = <T,>(arr: T[]) => arr[Math.floor(rnd() * arr.length)];
-  const borrowers: Borrower[] = PEOPLE.map(p => ({ ...p, loanId: 'L' + p.id.slice(1) }));
+  const borrowers: (Person & { loanId: string })[] = PEOPLE.map(p => ({ ...p, loanId: 'L' + p.id.slice(1) }));
   const B = (id: string) => borrowers.find(b => b.id === id)!;
   const loans: Loan[] = [];
   const insts: Installment[] = [];

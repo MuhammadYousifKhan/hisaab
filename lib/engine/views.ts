@@ -1,15 +1,14 @@
 // Read-only views derived from engine state. Projections live here and never touch the ledger.
 import { ACCTS, CH, CLEARING } from './data';
-import type { AcctCode, Entry, Exception, Installment, State, Txn } from './types';
-import { TODAY } from './util';
+import type { AcctCode, Entry, Exception, Installment, Loan, State, Txn } from './types';
 
 export type InstStatus = 'ontime' | 'late' | 'overdue' | 'today' | 'upcoming';
 export interface InstView extends Installment { status: InstStatus }
 
-export function instStatus(i: Installment): InstStatus {
+export function instStatus(i: Installment, today: number): InstStatus {
   if (i.paid >= i.amount) return (i.fullDay ?? Infinity) <= i.due ? 'ontime' : 'late';
-  if (i.due < TODAY) return 'overdue';
-  if (i.due === TODAY) return 'today';
+  if (i.due < today) return 'overdue';
+  if (i.due === today) return 'today';
   return 'upcoming';
 }
 
@@ -27,7 +26,7 @@ export function appliedInfo(S: State, t: Txn): { nos: number[]; excess: number }
 }
 
 export interface BorrowerSummary {
-  b: State['borrowers'][number]; loan: State['loans'][number]; insts: InstView[];
+  b: State['borrowers'][number]; loan: Loan | null; insts: InstView[];
   owed: number; credit: number; paid: number; pays: Txn[]; onWay: number;
   overdue: InstView[]; next: InstView | null; changes: Entry[];
   record: { due: number; paid: number; onTime: number; late: number; streak: number; months: number; repaid: number };
@@ -35,11 +34,12 @@ export interface BorrowerSummary {
 }
 
 export function borrowerSummary(S: State, bid: string): BorrowerSummary {
-  const b = S.bById.get(bid)!, loan = S.loanByBid.get(bid)!;
-  const insts: InstView[] = S.insts.filter(i => i.bid === bid).map(i => ({ ...i, status: instStatus(i) }));
+  const TODAY = S.today;
+  const b = S.bById.get(bid)!, loan = S.loanByBid.get(bid) ?? null;
+  const insts: InstView[] = S.insts.filter(i => i.bid === bid).map(i => ({ ...i, status: instStatus(i, TODAY) }));
   const owed = S.ledger.balance('1200', bid);
   const credit = -S.ledger.balance('2000', bid);
-  const paid = loan.total - owed;
+  const paid = loan ? loan.total - owed : 0;
   const linked = new Set(S.reports.filter(r => r.bid === bid && r.tid).map(r => r.tid as string));
   const pays = S.txnList.filter(t => t.borrowerId === bid || linked.has(t.tid)).slice().sort((x, y) => y.day - x.day || y.min - x.min);
   const onWay = pays.filter(t => t.state === 'applied' && !t.settled && t.borrowerId === bid).reduce((s, t) => s + t.amount, 0);
@@ -58,7 +58,7 @@ export function borrowerSummary(S: State, bid: string): BorrowerSummary {
   }
   const record = {
     due: dueSoFar.length, paid: full.length, onTime, late: full.length - onTime, streak,
-    months: Math.max(1, Math.round((TODAY - loan.start) / 30.4)), repaid: insts.reduce((s, i) => s + i.paid, 0),
+    months: loan ? Math.max(1, Math.round((TODAY - loan.start) / 30.4)) : 0, repaid: insts.reduce((s, i) => s + i.paid, 0),
   };
   let est: BorrowerSummary['est'] = null;
   if (open.length) {
@@ -72,7 +72,7 @@ export function borrowerSummary(S: State, bid: string): BorrowerSummary {
 }
 
 function onTimeRate(S: State, bid: string): number {
-  const due = S.insts.filter(i => i.bid === bid && i.due < TODAY);
+  const due = S.insts.filter(i => i.bid === bid && i.due < S.today);
   const ok = due.filter(i => i.paid >= i.amount && (i.fullDay ?? Infinity) <= i.due).length;
   return (ok + 1) / (due.length + 2);
 }
@@ -83,7 +83,7 @@ export function forecastDaily(S: State, horizon = 14): ForecastDay[] {
   const credit = new Map(S.borrowers.map(b => [b.id, Math.max(0, -S.ledger.balance('2000', b.id))]));
   const rate = new Map(S.borrowers.map(b => [b.id, onTimeRate(S, b.id)]));
   const out: ForecastDay[] = [];
-  for (let d = TODAY + 1; d <= TODAY + horizon; d++) {
+  for (let d = S.today + 1; d <= S.today + horizon; d++) {
     let lo = 0, mid = 0, hi = 0;
     for (const i of S.insts) {
       if (i.due !== d) continue;
@@ -103,7 +103,7 @@ export function forecastDaily(S: State, horizon = 14): ForecastDay[] {
 }
 export function forecastTotal(S: State, horizon = 14) {
   const f = forecastDaily(S, horizon);
-  return { low: f.reduce((s, x) => s + x.low, 0), mid: f.reduce((s, x) => s + x.mid, 0), high: f.reduce((s, x) => s + x.high, 0), from: TODAY + 1, to: TODAY + horizon };
+  return { low: f.reduce((s, x) => s + x.low, 0), mid: f.reduce((s, x) => s + x.mid, 0), high: f.reduce((s, x) => s + x.high, 0), from: S.today + 1, to: S.today + horizon };
 }
 
 export function bankByDay(S: State): Map<number, number> {

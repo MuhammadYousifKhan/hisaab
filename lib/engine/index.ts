@@ -4,7 +4,7 @@ export * from './data';
 export { generate } from './generate';
 export { normalize } from './adapters';
 export { makeLedger } from './ledger';
-export { build, replayFiles, normName } from './pipeline';
+export { build, buildLive, bankKey, replayFiles, normName, scheduleFor } from './pipeline';
 export type { Inputs } from './pipeline';
 export { explain } from './explain';
 export { runChecks, scorecard, tryUnbalanced } from './proof';

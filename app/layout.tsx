@@ -18,7 +18,8 @@ export const viewport: Viewport = { width: 'device-width', initialScale: 1, view
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={[body.variable, display.variable, mono.variable, urdu.variable].join(' ')}>
-      <body>
+      {/* Browser extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body> before React hydrates. */}
+      <body suppressHydrationWarning>
         <header className="topbar">
           <div className="topbar-in">
             <Link href="/" className="brand" style={{ textDecoration: 'none', color: 'inherit' }}>

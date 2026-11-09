@@ -4,8 +4,12 @@ import { z } from 'zod';
 import type { PayCh, PayStatus, RawEvent } from './types';
 import { toPaisa } from './util';
 
-const Money = z.string().regex(/^\d+\.\d{2}$/, 'amount must look like 5000.00');
-const Id = z.string().min(4);
+// Channels send "5000.00", some send "5000", "5,000" or a JSON number. All become a plain decimal string.
+const Money = z.union([z.string(), z.number()])
+  .transform(v => String(v).replace(/,/g, '').trim())
+  .pipe(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/, 'amount must look like 5000 or 5000.00'))
+  .refine(v => toPaisa(v) > 0, 'amount must be more than zero');
+const Id = z.string().min(4).max(64);
 
 const Reversal = z.object({ event: z.literal('payment.reversed'), txn_id: Id, reason: z.string(), at: z.string() });
 const Easypaisa = z.object({

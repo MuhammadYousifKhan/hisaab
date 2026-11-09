@@ -6,11 +6,16 @@ export type Lang = 'en' | 'ur';
 export type AcctCode = '1000' | '1101' | '1102' | '1103' | '1104' | '1200' | '1300' | '2000' | '2100' | '2200' | '3000' | '4000' | '5000';
 export type AcctType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 
-export interface Person {
+/** Who a borrower is. Demo personas add a story; live borrowers are entered by lender staff. */
+export interface BorrowerBase {
   id: string; name: string; ur: string; work: string; workUr: string; city: string; phone: string; ch: PayCh;
+  tag?: string; story?: string;
+}
+/** A scripted demo persona, with the loan terms and habits the generator uses. */
+export interface Person extends BorrowerBase {
   n: number; inst: number; principal: number; firstDue: number; onTime: number; tag: string; story: string;
 }
-export interface Borrower extends Person { loanId: string }
+export interface Borrower extends BorrowerBase { loanId: string | null }
 export interface Loan { id: string; bid: string; principal: number; fee: number; total: number; n: number; instAmt: number; start: number }
 export interface InstallmentPart { tid: string | null; amt: number; day: number }
 export interface Installment {
@@ -18,11 +23,15 @@ export interface Installment {
   paid: number; parts: InstallmentPart[]; fullDay: number | null;
 }
 
-export interface RawEvent {
+/** Arrival stamp of a live input: per-book arrival number, and the Pakistan-time day and minute it arrived. */
+export interface Arrival { ord?: number; recvDay?: number; recvMin?: number }
+/** day/min are the channel's own timestamp for the payment; the arrival stamp says when it reached us. */
+export interface RawEvent extends Arrival {
   id: string; src: string; ch: PayCh; day: number; min: number; tid: string;
   payload: Record<string, unknown>; key: string; redelivery?: boolean;
 }
-export interface BankLine { id: string; day: number; min: number; amount: number; ref: string; narration: string }
+/** key is the dedupe key (demo books use the line id). */
+export interface BankLine extends Arrival { id: string; day: number; min: number; amount: number; ref: string; narration: string; key?: string }
 
 export type TruthKind =
   | 'orphan' | 'wrong_reference' | 'possible_duplicate' | 'duplicate_delivery' | 'reversal' | 'failed'
@@ -87,23 +96,35 @@ export interface Exception {
   payDay?: number; reportedTid?: string; finding?: string; linked?: string | null;
 }
 
-export type Action =
+/** Human input. `at` is the day it was recorded and `by` who recorded it; demo actions stored before
+ *  these fields existed fall back to the scenario's today and the demo ops officer. */
+export type Action = (
   | { type: 'report'; n: number; bid: string; ch: Ch; amount: number; day: number; tid: string }
   | { type: 'apply'; exId: string; bid: string }
-  | { type: 'refund' | 'accept_fee' | 'claim' | 'ack'; exId: string };
+  | { type: 'refund' | 'accept_fee' | 'claim' | 'ack'; exId: string }
+) & { at?: number; by?: string; ord?: number };
 
 export interface ScoreRow { kind: TruthKind; label: string; how: string; injected: number; caught: number }
 export interface Score { rows: ScoreRow[]; injected: number; caught: number; raised: number; tp: number; fp: number; auto: number; correct: number }
 
 export interface Quarantined { re: RawEvent; error: string }
 
+export type BookKind = 'demo' | 'live';
+/** A borrower record as stored for a live book. */
+export interface BorrowerIn extends BorrowerBase { ord: number; recvDay: number }
+/** A loan as issued in a live book. firstDue is the first weekly due day; amounts are paisa. */
+export interface LoanIn { ord: number; recvDay: number; id: string; bid: string; principal: number; fee: number; n: number; firstDue: number }
+export interface LiveInputs {
+  today: number; borrowers: BorrowerIn[]; loans: LoanIn[]; raw: RawEvent[]; bank: BankLine[]; actions: Action[];
+}
+
 export interface State {
-  seed: number; today: number; borrowers: Borrower[]; loans: Loan[]; insts: Installment[];
+  kind: BookKind; seed: number; today: number; borrowers: Borrower[]; loans: Loan[]; insts: Installment[];
   raw: RawEvent[]; bank: BankLine[]; truth: Truth[]; truthByTid: Map<string, TruthTag>;
   ledger: Ledger; txns: Map<string, Txn>; txnList: Txn[]; batches: Map<string, Batch>;
   exceptions: Exception[]; exById: Map<string, Exception>; notes: { day: number; by: string; text: string; ex?: string }[];
   seenRaw: Set<string>; seenBank: Set<string>; ignored: (RawEvent | BankLine)[]; quarantined: Quarantined[]; accepted: number;
   rawById: Map<string, RawEvent>; bankById: Map<string, BankLine>; reports: Exception[]; cur: number;
   bById: Map<string, Borrower>; loanById: Map<string, Loan>; loanByBid: Map<string, Loan>;
-  phoneIdx: Map<string, string>; nameIdx: Map<string, string>; score: Score; autoEntryCount: number;
+  phoneIdx: Map<string, string>; nameIdx: Map<string, string>; nameDup: Set<string>; score: Score; autoEntryCount: number;
 }
