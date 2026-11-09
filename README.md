@@ -33,6 +33,17 @@ No database setup is needed: by default the app runs an embedded Postgres ([PGli
 
 **Sign in** at `/login`. One form: a mobile number and PIN opens a borrower's account; a username and password opens the lender console.
 
+### Test accounts
+
+| Role | Sign in with | Password / PIN |
+|---|---|---|
+| Lender staff | username `sana` | `hisaab-ops` |
+| Borrower | none yet: staff create borrowers, see below | the PIN set when the borrower is added |
+
+The staff account is created on the first start of a database. Locally (`npm run dev`) it exists automatically. On a hosted deployment, set `OPS_USERNAME=sana` and `OPS_PASSWORD=hisaab-ops` **before the first start**, or the app generates a random password and prints it once in the server log. These are shared test credentials for reviewers; replace them before any real use.
+
+To try the borrower side: sign in as staff, open Console › Borrowers & loans, add a borrower (for example mobile `0300 1112223`, PIN `4321`) and issue a loan, then sign out and sign in with that number and PIN.
+
 **Staff**
 1. Console › Borrowers & loans: add a borrower (a mobile number and a PIN), then issue a loan. The disbursement is posted to the journal.
 2. Payments arrive by webhook, by file upload (Console › Intake), or from the Simulator, which stands in for the channels and the bank until they are connected.
