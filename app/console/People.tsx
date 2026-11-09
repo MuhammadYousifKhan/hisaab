@@ -1,15 +1,20 @@
 import Link from 'next/link';
+import { approveApp, declineApp } from '@/app/console/people-actions';
 import { AddBorrowerForm, AddStaffForm, IssueLoanForm, ResetPinForm } from '@/components/PeopleForms';
+import SubmitButton from '@/components/SubmitButton';
 import { Pill } from '@/components/ui';
+import { listApplications } from '@/lib/db/applications';
 import { listStaff } from '@/lib/db/people';
 import type { Loaded } from '@/lib/db/store';
-import { CH, borrowerSummary, fmtDate, fmtRs, maskPhone } from '@/lib/engine';
+import { CH, borrowerSummary, fmtDate, fmtRs, iso, maskPhone } from '@/lib/engine';
 
 type SP = Record<string, string | string[] | undefined>;
 
 export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
   const { S, book, conn } = L;
   const staff = await listStaff(conn);
+  const apps = await listApplications(conn, book.id, 'pending');
+  const one = (v: string | string[] | undefined) => (typeof v === 'string' ? v.slice(0, 300) : '');
   const focus = typeof sp.b === 'string' ? sp.b : '';
   const rows = S.borrowers.map(b => {
     const sum = borrowerSummary(S, b.id);
@@ -22,6 +27,43 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
   return (
     <>
       {sp.empty === '1' && <div className="done" role="status">No borrowers yet. Add the first one below.</div>}
+      {one(sp.done) && <div className="done" role="status">{one(sp.done)}</div>}
+      {one(sp.err) && <div className="done crit" role="alert">{one(sp.err)}</div>}
+      <section className="panel" id="applications">
+        <h3>Applications ({apps.length})</h3>
+        {apps.length ? (
+          <div className="app-list">
+            {apps.map(a => {
+              const rs = Number(a.amountPaisa) / 100;
+              return (
+                <div key={a.id} className="app-item">
+                  <div className="row">
+                    <b>{a.name}</b>
+                    <span className="mono">{maskPhone(a.phone)}</span>
+                    <span>{a.work}, {a.city}</span>
+                    <span>{fmtRs(Number(a.amountPaisa))} over {a.weeks} weeks</span>
+                    <span className="muted">pays by {CH[a.channel as keyof typeof CH]?.name ?? a.channel} · applied {a.createdAt.toISOString().slice(0, 10)}</span>
+                  </div>
+                  <form action={approveApp} className="inline-form">
+                    <input type="hidden" name="bookId" value={book.id} />
+                    <input type="hidden" name="appId" value={a.id} />
+                    <label className="small">Principal <input name="principal" inputMode="numeric" defaultValue={rs} size={7} /></label>
+                    <label className="small">Charge <input name="fee" inputMode="numeric" defaultValue={Math.round(rs * 0.2 / 100) * 100} size={6} /></label>
+                    <label className="small">Weeks <input name="n" inputMode="numeric" defaultValue={a.weeks} size={3} /></label>
+                    <label className="small">First due <input name="firstDue" type="date" defaultValue={iso(S.today + 7)} min={iso(S.today + 1)} max={iso(S.today + 60)} /></label>
+                    <SubmitButton>Approve</SubmitButton>
+                  </form>
+                  <form action={declineApp} className="inline-form">
+                    <input type="hidden" name="bookId" value={book.id} />
+                    <input type="hidden" name="appId" value={a.id} />
+                    <SubmitButton ghost>Decline</SubmitButton>
+                  </form>
+                </div>
+              );
+            })}
+          </div>
+        ) : <p className="muted">No applications waiting. Applicants apply at <Link href="/apply">/apply</Link>.</p>}
+      </section>
       <section className="panel mt">
         <div className="row"><h3>Borrowers ({S.borrowers.length})</h3><a href="#add-borrower" className="btn sm ghost">Add borrower</a></div>
         {rows.length ? (

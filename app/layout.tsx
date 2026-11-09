@@ -27,7 +27,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       { href: '/simulate', match: '/simulate', label: 'Simulator' }, { href: '/proof', match: '/proof', label: 'Proof' }]
     : session?.role === 'borrower'
       ? [{ href: '/borrower/' + session.bid, match: '/borrower', label: 'My account' }]
-      : [{ href: '/', match: '/', label: 'Home' }, { href: '/proof', match: '/proof', label: 'Proof' }];
+      : [{ href: '/', match: '/', label: 'Home' }, { href: '/apply', match: '/apply', label: 'Apply' }, { href: '/proof', match: '/proof', label: 'Proof' }];
   return (
     <html lang="en" className={[body.variable, display.variable, mono.variable, urdu.variable].join(' ')}>
       {/* Browser extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body> before React hydrates. */}

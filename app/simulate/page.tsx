@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { AdvanceForm, ReverseForm, SendForm, SettleForm } from '@/components/SimForms';
+import { AdvanceForm, BrokenForm, DepositForm, RepeatForm, ReverseForm, SandboxForm, SendForm, SettleForm } from '@/components/SimForms';
 import { Pill } from '@/components/ui';
 import { requireOps } from '@/lib/auth/viewer';
 import { clockFor, loadState } from '@/lib/db/store';
@@ -20,6 +20,8 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
     .map(t => ({ tid: t.tid, label: t.tid + ' · ' + CH[t.ch].name + ' · ' + fmtRs(t.amount) + ' · ' + fmtDate(t.day) }));
   const open = Array.from(S.batches.values()).filter(b => !b.settled && b.ch !== 'RA' && b.gross - b.clawback > 0).sort((a, b) => a.day - b.day);
   const today = clockFor(book).day;
+  const repeatable = S.raw.filter(r => !r.redelivery && r.payload.event !== 'payment.reversed').slice().reverse().slice(0, 20)
+    .map(r => ({ id: r.id, label: r.tid + ' · ' + CH[r.ch].name }));
 
   return (
     <>
@@ -31,6 +33,12 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
         <div className="kpi"><div className="lbl">Open review items</div><div className="val">{S.exceptions.filter(e => e.status === 'open').length}</div><div className="sub"><Link href="/console?tab=queue">Open the queue</Link></div></div>
       </div>
 
+      <section className="panel mt">
+        <h3>Sandbox scenario</h3>
+        <p className="muted">Adds four sandbox borrowers and one of every payment situation to this book, then checks each one.</p>
+        <SandboxForm />
+      </section>
+
       <div className="p-grid mt">
         <section className="panel">
           <h3>Send a payment</h3>
@@ -40,6 +48,14 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
           <section className="panel">
             <h3>Reverse a payment</h3>
             <ReverseForm payments={reversible} />
+          </section>
+          <section className="panel">
+            <h3>Other events</h3>
+            <div className="form">
+              <RepeatForm options={repeatable} />
+              <BrokenForm />
+              <DepositForm />
+            </div>
           </section>
           <section className="panel">
             <h3>Move the date forward</h3>

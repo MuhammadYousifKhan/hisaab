@@ -3,9 +3,11 @@
 // the loan's disbursement entry is posted by the engine, never written here.
 import { randomInt } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { hashSecret } from '@/lib/auth/password';
 import { actorName, requireOps } from '@/lib/auth/viewer';
+import { approveApplication, declineApplication } from '@/lib/db/applications';
 import { addStaff, resetBorrowerPin } from '@/lib/db/people';
 import { appendBorrower, appendLoan, clockFor, getBook, loadState } from '@/lib/db/store';
 import { getConn } from '@/lib/db/client';
@@ -106,4 +108,42 @@ export async function addStaffMember(_prev: FormState, fd: FormData): Promise<Fo
   if ('error' in r) return { error: 'The username ' + p.data.username + ' is taken.' };
   revalidatePath('/console');
   return { ok: 'Added ' + p.data.name + '. They can sign in as ' + p.data.username + '.' };
+}
+
+const Approve = z.object({
+  bookId: BookId,
+  appId: z.coerce.number().int().positive(),
+  principal: z.coerce.number().int('Whole rupees only').min(1000, 'At least Rs 1,000').max(1_000_000),
+  fee: z.coerce.number().int('Whole rupees only').min(0),
+  n: z.coerce.number().int().min(4, 'At least 4 weekly installments').max(52, 'At most 52 weekly installments'),
+  firstDue: z.string(),
+});
+const back = (q: Record<string, string>) => '/console?' + new URLSearchParams({ tab: 'people', ...q }).toString() + '#applications';
+
+/** Approve an application: open the account with the applicant's own PIN and issue the loan. */
+export async function approveApp(fd: FormData): Promise<void> {
+  const s = await requireOps('/console?tab=people');
+  const p = Approve.safeParse(Object.fromEntries(fd));
+  if (!p.success) redirect(back({ err: p.error.issues[0]?.message ?? 'Check the form.' }));
+  const { bookId, appId, principal, fee, n } = p.data;
+  if (fee > principal / 2) redirect(back({ err: 'The service charge can be at most half the principal.' }));
+  const conn = await getConn();
+  const book = await getBook(conn, bookId);
+  if (!book || book.kind !== 'live') redirect(back({ err: 'Unknown book.' }));
+  const today = clockFor(book).day;
+  const firstDue = dayFromIso(p.data.firstDue);
+  if (firstDue === null || firstDue <= today || firstDue > today + 60) redirect(back({ err: 'The first installment must fall due between tomorrow and 60 days from today.' }));
+  const r = await approveApplication(conn, bookId, appId, { principal: principal * 100, fee: fee * 100, n, firstDue }, actorName(s));
+  revalidatePath('/', 'layout');
+  if ('error' in r) redirect(back({ err: r.error }));
+  redirect(back({ done: 'Approved: account ' + r.bid + ' opened and loan ' + r.loanId + ' issued. The applicant can sign in with their phone and PIN.' }));
+}
+
+export async function declineApp(fd: FormData): Promise<void> {
+  const s = await requireOps('/console?tab=people');
+  const p = z.object({ bookId: BookId, appId: z.coerce.number().int().positive() }).safeParse(Object.fromEntries(fd));
+  if (!p.success) redirect(back({ err: 'Invalid request.' }));
+  const ok = await declineApplication(await getConn(), p.data.bookId, p.data.appId, actorName(s));
+  revalidatePath('/console');
+  redirect(back(ok ? { done: 'Application declined.' } : { err: 'That application was already decided.' }));
 }

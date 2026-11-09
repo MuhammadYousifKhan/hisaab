@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { LoginForm } from '@/components/LoginForms';
 import { getSession, safeNext } from '@/lib/auth/viewer';
@@ -15,6 +16,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <section className="panel login-card">
       <h2>Sign in</h2>
       <LoginForm next={next} />
+      <p className="muted small mt">New here? <Link href="/apply">Apply for a loan</Link></p>
     </section>
   );
 }

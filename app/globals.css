@@ -388,3 +388,10 @@ textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(
 
 .login-card{max-width:420px;margin:24px auto 0}
 .login-card h2{margin-bottom:14px}
+.apply-card{max-width:720px;margin:24px auto 0}
+.apply-card > h2{margin-bottom:4px}
+.app-list{display:grid;gap:12px}
+.app-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:10px}
+.app-item .row{flex-wrap:wrap;gap:6px 14px}
+.sbx-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:14px}
+.sbx-list li{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}

@@ -6,13 +6,14 @@ import { randomInt } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { requireOps } from '@/lib/auth/viewer';
+import { actorName, requireOps } from '@/lib/auth/viewer';
 import { getConn } from '@/lib/db/client';
 import { advanceClock, clockFor, currentBook, loadState } from '@/lib/db/store';
 import { CH } from '@/lib/engine';
 import type { PayCh } from '@/lib/engine';
 import { ingestBank, ingestPayments } from '@/lib/ingest/ingest';
 import { paymentPayload, reversalPayload } from '@/lib/ingest/payloads';
+import { runSandbox, type SandboxResult } from '@/lib/sandbox';
 
 export type SimState = { ok?: string; error?: string; payload?: string };
 
@@ -107,4 +108,56 @@ export async function simAdvance(_prev: SimState, fd: FormData): Promise<SimStat
   try { await advanceClock(conn, book.id, days); } catch (e) { return { error: e instanceof Error ? e.message : 'Could not move the clock.' }; }
   revalidatePath('/', 'layout');
   return { ok: 'Moved the live book forward ' + days + ' day' + (days === 1 ? '' : 's') + '. Installments due in between are now processed.' };
+}
+
+export type SandboxState = { error?: string; result?: SandboxResult };
+
+/** Run the whole sandbox scenario: every exceptional state, through the real intake, then checked. */
+export async function simSandbox(): Promise<SandboxState> {
+  const s = await requireOps('/simulate');
+  try {
+    const result = await runSandbox(await getConn(), actorName(s));
+    revalidatePath('/', 'layout');
+    return { result };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'The sandbox scenario could not run.' };
+  }
+}
+
+/** A channel sends a payment it already sent (a webhook retry). */
+export async function simRepeat(_prev: SimState, fd: FormData): Promise<SimState> {
+  await requireOps('/simulate');
+  const id = String(fd.get('raw') ?? '');
+  const conn = await getConn();
+  const L = await loadState({ conn, kind: 'live' });
+  const re = L.S.raw.find(r => r.id === id);
+  if (!re) return { error: 'Choose a payment to send again.' };
+  const { results } = await ingestPayments([{ ch: re.ch, payload: re.payload }], conn);
+  revalidatePath('/', 'layout');
+  return { ok: re.tid + ' delivered again: ' + (results[0].status === 'duplicate' ? 'recognised as a repeat, nothing applied twice.' : results[0].status + '.') };
+}
+
+/** A channel sends a payload that fails validation. */
+export async function simBroken(_prev: SimState, fd: FormData): Promise<SimState> {
+  await requireOps('/simulate');
+  const ch = (['EP', 'JC', 'CA', 'RA'] as const).find(c => c === fd.get('ch')) ?? 'JC';
+  const book = await currentBook(await getConn(), 'live');
+  const { day, min } = clockFor(book);
+  const payload = paymentPayload({ ch, tid: newTid(ch), amount: 120000, phone: null, name: 'UNKNOWN', ref: '', status: 'success', day, min });
+  payload[ch === 'EP' ? 'amount_pkr' : 'amount'] = 'twelve hundred';
+  const { results } = await ingestPayments([{ ch, payload }]);
+  revalidatePath('/', 'layout');
+  return { ok: CH[ch].name + ' payload ' + results[0].status + (results[0].error ? ': ' + results[0].error : '') + '. It is stored, never dropped.', payload: JSON.stringify(payload, null, 2) };
+}
+
+/** Money reaches the bank with no channel record (e.g. a cash deposit at a branch). */
+export async function simDeposit(_prev: SimState, fd: FormData): Promise<SimState> {
+  await requireOps('/simulate');
+  const p = z.object({ amount: z.coerce.number().positive('Enter an amount').max(1_000_000), narration: z.string().trim().min(2, 'Enter the bank narration').max(120) }).safeParse(Object.fromEntries(fd));
+  if (!p.success) return { error: p.error.issues[0]?.message ?? 'Check the form.' };
+  const book = await currentBook(await getConn(), 'live');
+  const { day, min } = clockFor(book);
+  const { results } = await ingestBank([{ day, min, amount: Math.round(p.data.amount * 100), ref: '', narration: p.data.narration, key: 'sim:deposit:' + randomInt(1e9), source: 'Simulator (bank)' }]);
+  revalidatePath('/', 'layout');
+  return { ok: 'Deposit ' + results[0].id + ' reached the bank with no payment record. It is held for review.' };
 }

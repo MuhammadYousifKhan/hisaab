@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { simAdvance, simReverse, simSend, simSettle, type SimState } from '@/app/simulate/actions';
+import { simAdvance, simBroken, simDeposit, simRepeat, simReverse, simSandbox, simSend, simSettle, type SandboxState, type SimState } from '@/app/simulate/actions';
 
 type Act = (s: SimState, fd: FormData) => Promise<SimState>;
 
@@ -73,6 +73,64 @@ export function AdvanceForm() {
     <form action={action} className="inline-form">
       <select name="days" defaultValue="1" aria-label="Days to move forward"><option value="1">1 day</option><option value="2">2 days</option><option value="7">7 days</option></select>
       <button type="submit" className="btn ghost" disabled={pending}>{pending ? 'Moving…' : 'Move the clock forward'}</button>
+      <Out s={s} pending={pending} />
+    </form>
+  );
+}
+
+export function SandboxForm() {
+  const [s, action, pending] = useActionState<SandboxState, FormData>(simSandbox, {});
+  const r = s.result;
+  return (
+    <form action={action} className="form">
+      <button type="submit" className="btn" disabled={pending}>{pending ? 'Running…' : 'Run sandbox scenario'}</button>
+      {!pending && s.error && <p className="err" role="alert">{s.error}</p>}
+      {!pending && r && (
+        <>
+          <p className={'msg ' + (r.steps.every(x => x.ok) ? 'good' : 'crit')} role="status">
+            {r.steps.filter(x => x.ok).length} of {r.steps.length} states produced and handled correctly (sandbox {r.tag}).
+          </p>
+          <ul className="sbx-list">
+            {r.steps.map(x => <li key={x.label}><span className={'pill ' + (x.ok ? 'good' : 'crit')}>{x.ok ? '✓' : '✕'}</span><span>{x.label}</span><span className="mono muted small">{x.detail}</span></li>)}
+          </ul>
+          <p className="small">Sandbox borrowers (PIN {'1234'}): {r.borrowers.map(b => b.id + ' ' + b.phone).join(' · ')}</p>
+          <p className="small"><a href="/console?tab=queue">Open the review queue</a> · <a href="/proof">Open Proof</a></p>
+        </>
+      )}
+    </form>
+  );
+}
+
+export function RepeatForm({ options }: { options: { id: string; label: string }[] }) {
+  const [s, action, pending] = useSim(simRepeat);
+  if (!options.length) return <p className="muted small">No payments to repeat yet.</p>;
+  return (
+    <form action={action} className="inline-form">
+      <select name="raw" aria-label="Payment to deliver again" defaultValue={options[0].id}>{options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select>
+      <button type="submit" className="btn sm ghost" disabled={pending}>Deliver again</button>
+      <Out s={s} pending={pending} />
+    </form>
+  );
+}
+
+export function BrokenForm() {
+  const [s, action, pending] = useSim(simBroken);
+  return (
+    <form action={action} className="inline-form">
+      <select name="ch" aria-label="Channel" defaultValue="JC"><option value="JC">JazzCash</option><option value="EP">Easypaisa</option><option value="RA">Raast</option><option value="CA">Cash agent</option></select>
+      <button type="submit" className="btn sm ghost" disabled={pending}>Send malformed payload</button>
+      <Out s={s} pending={pending} />
+    </form>
+  );
+}
+
+export function DepositForm() {
+  const [s, action, pending] = useSim(simDeposit);
+  return (
+    <form action={action} className="inline-form">
+      <input name="amount" inputMode="decimal" defaultValue="1500" aria-label="Amount in rupees" size={6} dir="ltr" />
+      <input name="narration" defaultValue="CASH DEPOSIT BR-0412 SUKKUR" aria-label="Bank narration" />
+      <button type="submit" className="btn sm ghost" disabled={pending}>Deposit with no record</button>
       <Out s={s} pending={pending} />
     </form>
   );

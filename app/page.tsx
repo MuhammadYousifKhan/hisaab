@@ -19,6 +19,7 @@ export default async function Home() {
             <Link href="/simulate"><section className="panel"><h3>Simulator</h3><p className="muted">Send test payments and settlements.</p></section></Link>
           </>
         )}
+        {!s && <Link href="/apply"><section className="panel"><h3>Apply for a loan</h3><p className="muted">No credit history needed.</p></section></Link>}
         {!s && <Link href="/login"><section className="panel"><h3>Sign in</h3><p className="muted">Borrowers and lender staff.</p></section></Link>}
         <Link href="/proof"><section className="panel"><h3>Proof</h3><p className="muted">Live checks that the books balance.</p></section></Link>
       </div>

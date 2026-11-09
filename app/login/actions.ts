@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { expiresIn } from '@/lib/auth/session';
 import { clearSession, safeNext, setSession } from '@/lib/auth/viewer';
+import { applicationFor } from '@/lib/db/applications';
 import { checkBorrowerPin, checkStaff } from '@/lib/db/people';
 import { loadState } from '@/lib/db/store';
 import { isMobile, normPhone } from '@/lib/engine';
@@ -35,7 +36,14 @@ export async function signIn(_prev: LoginState, fd: FormData): Promise<LoginStat
 
   if (isMobile(phone)) {
     const b = L.S.borrowers.find(x => normPhone(x.phone) === phone);
-    if (!b || !/^\d{4,6}$/.test(p.data.secret.trim())) return wrong;
+    if (!/^\d{4,6}$/.test(p.data.secret.trim())) return wrong;
+    if (!b) {
+      // Not a borrower yet: an applicant with the right PIN learns where their application stands.
+      const a = await applicationFor(L.conn, L.book.id, phone, p.data.secret.trim());
+      if (a?.status === 'pending') return { error: 'Your application is still being reviewed. You can sign in once it is approved.' };
+      if (a?.status === 'declined') return { error: 'Your application was not approved this time.' };
+      return wrong;
+    }
     const r = await checkBorrowerPin(L.conn, L.book, b.id, p.data.secret.trim());
     if (!r.ok) {
       if (r.reason === 'locked') return { error: 'Too many wrong tries. Try again in ' + r.minutes + ' minute' + (r.minutes === 1 ? '' : 's') + ', or ask the lender to reset your PIN.' };

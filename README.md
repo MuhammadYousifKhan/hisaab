@@ -31,18 +31,21 @@ No database setup is needed: by default the app runs an embedded Postgres ([PGli
 
 ## Using it
 
-**Sign in** at `/login`. One form: a mobile number and PIN opens a borrower's account; a username and password opens the lender console.
+**Apply** at `/apply` (no sign-in, no credit history needed): name, mobile number, work, amount, weeks and a PIN. Staff approve or decline in Console › Borrowers & loans; approving opens the account with the applicant's own PIN and issues the loan.
+
+**Sign in** at `/login`. One form: a mobile number and PIN opens a borrower's account; a username and password opens the lender console. An applicant who signs in before approval is told the application is still being reviewed.
 
 ### Test accounts
 
 | Role | Sign in with | Password / PIN |
 |---|---|---|
 | Lender staff | username `sana` | `hisaab-ops` |
-| Borrower | none yet: staff create borrowers, see below | the PIN set when the borrower is added |
+| Borrower | the mobile number on the account | the PIN chosen when applying, or set by staff |
+| Sandbox borrowers | the numbers listed after running the sandbox scenario | `1234` |
 
 The staff account is created on the first start of a database. Locally (`npm run dev`) it exists automatically. On a hosted deployment, set `OPS_USERNAME=sana` and `OPS_PASSWORD=hisaab-ops` **before the first start**, or the app generates a random password and prints it once in the server log. These are shared test credentials for reviewers; replace them before any real use.
 
-To try the borrower side: sign in as staff, open Console › Borrowers & loans, add a borrower (for example mobile `0300 1112223`, PIN `4321`) and issue a loan, then sign out and sign in with that number and PIN.
+To try the borrower side: apply at `/apply` with any mobile number and a PIN, sign in as staff and approve the application in Console › Borrowers & loans, then sign in with that number and PIN. Or run the sandbox scenario (below) and use one of its borrowers.
 
 **Staff**
 1. Console › Borrowers & loans: add a borrower (a mobile number and a PIN), then issue a loan. The disbursement is posted to the journal.
@@ -51,7 +54,9 @@ To try the borrower side: sign in as staff, open Console › Borrowers & loans, 
 
 **Borrowers** see what they owe, where each payment is, why the balance changed, a repayment record, and can report a missing payment. English and Urdu.
 
-**Proof** (`/proof`, no sign-in) shows the ledger checks, live.
+**Sandbox scenario.** Simulator › Run sandbox scenario adds four sandbox borrowers and sends one of every payment situation through the real intake: normal, repeat delivery, paid twice, failed, partial, overpaid, reversed, paid from an unknown phone (with the borrower's report), wrong loan reference, pending, malformed, bank deposit with no record, short, over, exact and missing settlements. It then checks each one and lists the result. The Simulator can also send any single event on its own.
+
+**Proof** (`/proof`, no sign-in) shows the ledger checks, live. On an empty book it says so; run the sandbox scenario first.
 
 ## Getting data in
 

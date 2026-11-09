@@ -34,6 +34,7 @@ export default async function ProofPage() {
         <div>
           <h2>{pass} of {all.length} checks pass</h2>
           <p className="muted">Recomputed on every visit from everything stored.</p>
+          {S.ledger.entries.length === 0 && <p className="err">Nothing has been recorded yet, so these checks have nothing to test. Staff can load sandbox transactions from the Simulator.</p>}
         </div>
         <ProofButtons />
       </section>

@@ -140,7 +140,27 @@ export const borrowerLogins = pgTable('borrower_logins', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.bookId, t.borrowerId] })]);
 
-export const schema = { books, accounts, borrowers, loans, rawEvents, bankLines, actions, journalEntries, journalLines, staff, borrowerLogins };
+/** Loan applications from the public form. Mutable (pending → approved or declined); no money moves here.
+ *  Approving one creates the borrower and the loan through the normal append-only path. */
+export const applications = pgTable('applications', {
+  id: serial('id').primaryKey(),
+  bookId: integer('book_id').notNull(),
+  name: text('name').notNull(),
+  phone: text('phone').notNull(),
+  work: text('work').notNull().default(''),
+  city: text('city').notNull().default(''),
+  channel: text('channel').notNull(),
+  amountPaisa: bigint('amount_paisa', { mode: 'number' }).notNull(),
+  weeks: integer('weeks').notNull(),
+  pinHash: text('pin_hash').notNull(),
+  status: text('status').notNull().default('pending'),
+  borrowerId: text('borrower_id'),
+  decidedBy: text('decided_by'),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const schema = { books, accounts, borrowers, loans, rawEvents, bankLines, actions, journalEntries, journalLines, staff, borrowerLogins, applications };
 
 export const APPEND_ONLY = ['raw_events', 'bank_lines', 'actions', 'journal_entries', 'journal_lines', 'borrowers', 'loans'];
 
@@ -197,6 +217,13 @@ CREATE TABLE IF NOT EXISTS journal_lines (
 CREATE TABLE IF NOT EXISTS staff (
   id serial PRIMARY KEY, username text NOT NULL UNIQUE, name text NOT NULL, pass_hash text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS applications (
+  id serial PRIMARY KEY, book_id integer NOT NULL REFERENCES books(id), name text NOT NULL, phone text NOT NULL,
+  work text NOT NULL DEFAULT '', city text NOT NULL DEFAULT '', channel text NOT NULL,
+  amount_paisa bigint NOT NULL CHECK (amount_paisa > 0), weeks integer NOT NULL CHECK (weeks BETWEEN 1 AND 104),
+  pin_hash text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+  borrower_id text, decided_by text, decided_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS applications_one_pending ON applications (book_id, phone) WHERE status = 'pending';
 CREATE TABLE IF NOT EXISTS borrower_logins (
   book_id integer NOT NULL REFERENCES books(id), borrower_id text NOT NULL, pin_hash text NOT NULL,
   failed integer NOT NULL DEFAULT 0, locked_until timestamptz, updated_at timestamptz NOT NULL DEFAULT now(),

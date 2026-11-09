@@ -6,6 +6,7 @@ import CollectionsChart from '@/components/CollectionsChart';
 import SubmitButton from '@/components/SubmitButton';
 import { Facts, Pill, Rs } from '@/components/ui';
 import { loadView, requireOps } from '@/lib/auth/viewer';
+import { pendingCount } from '@/lib/db/applications';
 import Intake from './Intake';
 import People from './People';
 import {
@@ -30,6 +31,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
   const { S } = L;
   const bookId = L.book.id;
   const TODAY = S.today;
+  const apps = await pendingCount(L.conn, bookId);
   const K = kpis(S), fc = forecastTotal(S, 14);
   const autoPct = K.successN ? Math.round((K.autoN / K.successN) * 100) : 100;
   const openN = S.exceptions.filter(e => e.status !== 'resolved').length;
@@ -88,7 +90,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
         </section>
       </div>
       <nav className="ctabs" aria-label="Console sections">
-        {([['queue', 'Review queue', openN], ['pay', 'Payments', null], ['set', 'Settlements', null], ['jrn', 'Journal', null], ['people', 'Borrowers & loans', null], ['intake', 'Intake', null]] as const).map(([k, l, c]) => (
+        {([['queue', 'Review queue', openN], ['pay', 'Payments', null], ['set', 'Settlements', null], ['jrn', 'Journal', null], ['people', 'Borrowers & loans', apps || null], ['intake', 'Intake', null]] as const).map(([k, l, c]) => (
           <Link key={k} href={'/console?tab=' + k} aria-current={tab === k ? 'page' : undefined} scroll={false}>
             {l}{c !== null && <span className={'count' + (c ? '' : ' zero')}>{c}</span>}
           </Link>
