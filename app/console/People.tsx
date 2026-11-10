@@ -3,7 +3,7 @@ import { approveApp, declineApp } from '@/app/console/people-actions';
 import { AddBorrowerForm, AddStaffForm, IssueLoanForm, ResetPinForm } from '@/components/PeopleForms';
 import SubmitButton from '@/components/SubmitButton';
 import { Pill } from '@/components/ui';
-import { listApplications } from '@/lib/db/applications';
+import { affordability, listApplications } from '@/lib/db/applications';
 import { listStaff } from '@/lib/db/people';
 import type { Loaded } from '@/lib/db/store';
 import { CH, borrowerSummary, fmtDate, fmtRs, iso, maskPhone } from '@/lib/engine';
@@ -35,6 +35,8 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
           <div className="app-list">
             {apps.map(a => {
               const rs = Number(a.amountPaisa) / 100;
+              const af = affordability({ amountPaisa: Number(a.amountPaisa), weeks: a.weeks, incomePaisa: a.incomePaisa === null ? null : Number(a.incomePaisa) });
+              const years = a.workYears === null ? null : a.workYears >= 3 ? 'over 3 years' : a.workYears >= 1 ? '1 to 3 years' : 'under a year';
               return (
                 <div key={a.id} className="app-item">
                   <div className="row">
@@ -43,6 +45,14 @@ export default async function People({ L, sp }: { L: Loaded; sp: SP }) {
                     <span>{a.work}, {a.city}</span>
                     <span>{fmtRs(Number(a.amountPaisa))} over {a.weeks} weeks</span>
                     <span className="muted">pays by {CH[a.channel as keyof typeof CH]?.name ?? a.channel} · applied {a.createdAt.toISOString().slice(0, 10)}</span>
+                  </div>
+                  <div className="afford">
+                    {a.incomePaisa !== null ? <span>Earns about <b>{fmtRs(Number(a.incomePaisa))}</b> a month</span> : <span className="muted">No income given</span>}
+                    {years && <span>{years} in this work</span>}
+                    {a.refName && <span>Reference: {a.refName}{a.refPhone ? ' · ' + maskPhone(a.refPhone) : ''}</span>}
+                    {af && <Pill cls={af.level} icon={af.level === 'good' ? '✓' : '!'}>{'Installment ' + fmtRs(af.installment) + ' a week = ' + Math.round(af.share * 100) + '% of weekly income'}</Pill>}
+                    {af && af.level !== 'good' && af.maxPrincipal > 0 && <span>Up to about {fmtRs(af.maxPrincipal)} keeps it to a quarter</span>}
+                    {af && <span className="muted small">Guide only: from what the applicant declared, not verified.</span>}
                   </div>
                   <form action={approveApp} className="inline-form">
                     <input type="hidden" name="bookId" value={book.id} />
