@@ -25,7 +25,9 @@ export const opsFromEnv = () => ({
 export type DB = PgliteDatabase<typeof schema>;
 interface Conn { db: DB; exec: (sql: string) => Promise<void>; kind: 'pglite' | 'postgres'; where: string }
 
-const g = globalThis as unknown as { __hisaabConn?: Promise<Conn> };
+// __hisaabDdl is the schema text the shared connection last applied. In development the connection outlives hot
+// reloads, so a schema change would otherwise never reach a database that is already open.
+const g = globalThis as unknown as { __hisaabConn?: Promise<Conn>; __hisaabDdl?: string };
 
 function pgliteDir(): string {
   if (process.env.PGLITE_DIR) return process.env.PGLITE_DIR;
@@ -67,7 +69,15 @@ async function connect(dataDir?: string): Promise<Conn> {
 
 /** One shared connection per server process (survives dev hot reloads). */
 export function getConn(): Promise<Conn> {
-  if (!g.__hisaabConn) g.__hisaabConn = connect().catch(err => { g.__hisaabConn = undefined; throw err; });
+  if (!g.__hisaabConn) {
+    g.__hisaabDdl = DDL;
+    g.__hisaabConn = connect().catch(err => { g.__hisaabConn = undefined; throw err; });
+  } else if (g.__hisaabDdl !== DDL) {
+    // The schema changed while this connection was open (hot reload, or a connection opened by older code): apply it
+    // again. Every statement is idempotent, and a failure drops the connection so the next call starts clean.
+    g.__hisaabDdl = DDL;
+    g.__hisaabConn = g.__hisaabConn.then(async c => { await c.exec(DDL); return c; }).catch(err => { g.__hisaabConn = undefined; throw err; });
+  }
   return g.__hisaabConn;
 }
 

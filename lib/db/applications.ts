@@ -7,7 +7,11 @@ import type { Conn } from './client';
 import { applications, borrowers } from './schema';
 import { appendBorrower, appendLoan, type NewLoan } from './store';
 
-export interface NewApplication { name: string; phone: string; work: string; city: string; ch: PayCh; amount: number; weeks: number }
+export interface NewApplication {
+  name: string; phone: string; work: string; city: string; ch: PayCh; amount: number; weeks: number;
+  /** Declared monthly income in paisa, years in this work (0, 1 or 3 meaning under 1, 1 to 3, over 3), and an optional reference. */
+  income?: number | null; workYears?: number | null; refName?: string | null; refPhone?: string | null;
+}
 export type AppRow = typeof applications.$inferSelect;
 
 export async function createApplication(conn: Conn, bookId: number, a: NewApplication, pinHash: string): Promise<{ id: number } | { error: 'borrower' | 'pending' }> {
@@ -16,11 +20,28 @@ export async function createApplication(conn: Conn, bookId: number, a: NewApplic
   const [p] = await conn.db.select({ id: applications.id }).from(applications).where(and(eq(applications.bookId, bookId), eq(applications.phone, a.phone), eq(applications.status, 'pending'))).limit(1);
   if (p) return { error: 'pending' };
   try {
-    const [row] = await conn.db.insert(applications).values({ bookId, name: a.name, phone: a.phone, work: a.work, city: a.city, channel: a.ch, amountPaisa: a.amount, weeks: a.weeks, pinHash }).returning({ id: applications.id });
+    const [row] = await conn.db.insert(applications).values({
+      bookId, name: a.name, phone: a.phone, work: a.work, city: a.city, channel: a.ch, amountPaisa: a.amount, weeks: a.weeks, pinHash,
+      incomePaisa: a.income ?? null, workYears: a.workYears ?? null, refName: a.refName || null, refPhone: a.refPhone || null,
+    }).returning({ id: applications.id });
     return { id: row.id };
   } catch {
     return { error: 'pending' }; // two submissions racing: the unique index keeps one pending application per phone
   }
+}
+
+/**
+ * A guide for staff, from what the applicant declared (not verified): the weekly installment at the usual 20% charge
+ * as a share of weekly income, and the largest loan that keeps it to a quarter of income.
+ */
+export function affordability(a: { amountPaisa: number; weeks: number; incomePaisa: number | null }) {
+  if (!a.incomePaisa || a.incomePaisa <= 0) return null;
+  const weeklyIncome = (a.incomePaisa * 12) / 52;
+  const total = Math.round(a.amountPaisa * 1.2);
+  const installment = total / a.weeks;
+  const share = installment / weeklyIncome;
+  const maxPrincipal = Math.floor((0.25 * weeklyIncome * a.weeks) / 1.2 / 50000) * 50000;
+  return { weeklyIncome: Math.round(weeklyIncome), installment: Math.round(installment), share, maxPrincipal, level: share <= 0.25 ? 'good' : share <= 0.4 ? 'warn' : 'crit' } as const;
 }
 
 export async function listApplications(conn: Conn, bookId: number, status: 'pending' | 'approved' | 'declined' = 'pending'): Promise<AppRow[]> {

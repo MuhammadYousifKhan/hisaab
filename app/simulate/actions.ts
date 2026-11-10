@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { actorName, requireOps } from '@/lib/auth/viewer';
 import { getConn } from '@/lib/db/client';
 import { advanceClock, clockFor, currentBook, loadState } from '@/lib/db/store';
-import { CH } from '@/lib/engine';
+import { CH, claimLeft } from '@/lib/engine';
 import type { PayCh } from '@/lib/engine';
 import { ingestBank, ingestPayments } from '@/lib/ingest/ingest';
 import { paymentPayload, reversalPayload } from '@/lib/ingest/payloads';
@@ -160,4 +160,22 @@ export async function simDeposit(_prev: SimState, fd: FormData): Promise<SimStat
   const { results } = await ingestBank([{ day, min, amount: Math.round(p.data.amount * 100), ref: '', narration: p.data.narration, key: 'sim:deposit:' + randomInt(1e9), source: 'Simulator (bank)' }]);
   revalidatePath('/', 'layout');
   return { ok: 'Deposit ' + results[0].id + ' reached the bank with no payment record. It is held for review.' };
+}
+
+/** A channel pays back (part of) a shortfall it was claimed for. The bank line quotes CLAIM-<batch> and is matched to the claim. */
+export async function simClaimPaid(_prev: SimState, fd: FormData): Promise<SimState> {
+  await requireOps('/simulate');
+  const p = z.object({ batch: z.string().min(5).max(60), amount: z.coerce.number().positive('Enter an amount').max(1_000_000) }).safeParse(Object.fromEntries(fd));
+  if (!p.success) return { error: p.error.issues[0]?.message ?? 'Choose a claim.' };
+  const conn = await getConn();
+  const book = await currentBook(conn);
+  const L = await loadState({ conn, bookId: book.id });
+  const claim = L.S.exById.get('EX-SHT-' + p.data.batch);
+  if (!claim || claim.status === 'resolved') return { error: 'That claim is no longer open.' };
+  const amount = Math.round(p.data.amount * 100);
+  const { day, min } = clockFor(book);
+  const b = L.S.batches.get(p.data.batch);
+  const { results } = await ingestBank([{ day, min, amount, ref: 'CLAIM-' + p.data.batch, narration: (b ? CH[b.ch].name.toUpperCase() : 'CHANNEL') + ' CLAIM ' + p.data.batch, key: 'sim:claim:' + p.data.batch + ':' + randomInt(1e9), source: 'Simulator (bank)' }], conn);
+  revalidatePath('/', 'layout');
+  return { ok: 'Bank line ' + results[0].id + ' quotes CLAIM-' + p.data.batch + '. ' + (amount > claimLeft(claim) ? 'It is more than the claim still owed, so it is held for review.' : 'It is matched to the claim.') };
 }

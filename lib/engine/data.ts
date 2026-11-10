@@ -37,8 +37,9 @@ export const KIND_LABEL: Record<ExKind, string> = {
   settlement_short: 'Settlement less than expected',
   settlement_over: 'Settlement more than expected',
   borrower_report: 'Borrower says a payment is missing',
+  refund_payable: 'Refund to pay out',
 };
-export const KCODE: Partial<Record<ExKind, string>> = { orphan_payment: 'ORP', reference_conflict: 'REF', possible_duplicate: 'DUP', unexpected_deposit: 'UNX' };
+export const KCODE: Partial<Record<ExKind, string>> = { orphan_payment: 'ORP', reference_conflict: 'REF', possible_duplicate: 'DUP', unexpected_deposit: 'UNX', refund_payable: 'PAY' };
 
 export const REASON_UR: Record<string, string> = {
   'Disputed by account holder': 'اکاؤنٹ ہولڈر نے اعتراض کیا',
@@ -51,6 +52,7 @@ export const REASON_LABEL: Record<string, string> = {
   LOAN_DISBURSED: 'Loan started', PAYMENT_APPLIED: 'Payment applied', PARTIAL_PAYMENT: 'Partial payment', OVERPAYMENT_CREDIT: 'Overpayment to credit',
   CREDIT_APPLIED: 'Credit used', CHANNEL_REVERSAL: 'Channel reversal', SUSPENSE_APPLIED: 'Held payment applied', REFUND_DUE: 'Refund due',
   SUSPENSE_RECEIPT: 'Held for review', SETTLEMENT: 'Settlement', SETTLEMENT_SHORT: 'Short settlement', SETTLEMENT_OVER: 'Over settlement', FEE_ACCEPTED: 'Fee accepted',
+  CLAIM_RECOVERED: 'Claim recovered', CHANNEL_RETURN_DUE: 'Owed back to channel', REFUND_PAID: 'Refund paid',
 };
 
 export const SYS = 'system: matcher';

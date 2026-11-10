@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { simAdvance, simBroken, simDeposit, simRepeat, simReverse, simSandbox, simSend, simSettle, type SandboxState, type SimState } from '@/app/simulate/actions';
+import { simAdvance, simBroken, simClaimPaid, simDeposit, simRepeat, simReverse, simSandbox, simSend, simSettle, type SandboxState, type SimState } from '@/app/simulate/actions';
 
 type Act = (s: SimState, fd: FormData) => Promise<SimState>;
 
@@ -131,6 +131,20 @@ export function DepositForm() {
       <input name="amount" inputMode="decimal" defaultValue="1500" aria-label="Amount in rupees" size={6} dir="ltr" />
       <input name="narration" defaultValue="CASH DEPOSIT BR-0412 SUKKUR" aria-label="Bank narration" />
       <button type="submit" className="btn sm ghost" disabled={pending}>Deposit with no record</button>
+      <Out s={s} pending={pending} />
+    </form>
+  );
+}
+
+/** A channel pays back a shortfall it was claimed for, quoting the batch (bank reference CLAIM-<batch>). */
+export function ClaimPaidForm({ claims }: { claims: { batch: string; label: string; left: number }[] }) {
+  const [s, action, pending] = useSim(simClaimPaid);
+  if (!claims.length) return <p className="muted small">No open shortfall claims. Settle a batch with a shortfall first.</p>;
+  return (
+    <form action={action} className="inline-form">
+      <select name="batch" aria-label="Claim being paid back" defaultValue={claims[0].batch}>{claims.map(c => <option key={c.batch} value={c.batch}>{c.label}</option>)}</select>
+      <input name="amount" inputMode="decimal" defaultValue={String(claims[0].left / 100)} aria-label="Amount paid back, in rupees" size={6} dir="ltr" />
+      <button type="submit" className="btn sm ghost" disabled={pending}>Channel pays back</button>
       <Out s={s} pending={pending} />
     </form>
   );

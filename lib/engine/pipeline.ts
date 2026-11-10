@@ -280,12 +280,14 @@ function addToBatch(S: State, t: Txn) {
   b.txns.push(t.tid);
   b.gross += t.amount;
   t.batchId = b.id;
+  // A payment that joins a batch already flagged as missing is just as overdue as the rest of it.
+  if (b.late) t.batchLate = true;
 }
 
 function onReversal(S: State, c: Extract<ReturnType<typeof normalize>, { type: 'reversal' }>) {
   const t = S.txns.get(c.tid);
-  if (!t || t.state === 'reversed' || t.state === 'failed' || t.state === 'pending') {
-    S.notes.push({ day: S.cur, by: 'system', text: 'Reversal for ' + c.tid + ' logged; nothing to reverse' });
+  if (!t || t.state === 'reversed' || t.state === 'failed' || t.state === 'pending' || t.state === 'refunded') {
+    S.notes.push({ day: S.cur, by: 'system', text: 'Reversal for ' + c.tid + ' logged; ' + (t?.state === 'refunded' ? 'the payment was already refunded, check with the channel' : 'nothing to reverse') });
     return;
   }
   const origs = t.entries.map(id => S.ledger.entries.find(e => e.id === id)).filter((e): e is Entry => !!e && !e.reversedBy);
@@ -312,6 +314,9 @@ function onReversal(S: State, c: Extract<ReturnType<typeof normalize>, { type: '
     const old = S.exById.get(t.exId);
     if (old && old.status !== 'resolved') { old.status = 'resolved'; old.resolution = { action: 'auto', je: null, note: 'Channel reversed the payment', by: 'system', day: S.cur }; }
   }
+  // A refund not paid out yet is no longer owed: the channel took the money back itself.
+  const pay = S.exById.get('EX-PAY-' + t.tid);
+  if (pay && pay.status !== 'resolved') { pay.status = 'resolved'; pay.resolution = { action: 'auto', je: null, note: 'Channel reversed the payment, so there is nothing to refund', by: 'system', day: S.cur }; }
   const ex = addEx(S, { id: 'EX-REV-' + t.tid, kind: 'reversal', key: t.tid, tid: t.tid, day: S.cur, amount: t.amount, bid: t.borrowerId, reason: c.reason, nos, ch: t.ch });
   t.exId = ex.id;
 }
@@ -322,6 +327,15 @@ function onBank(S: State, bl: BankLine) {
   if (S.seenBank.has(bankKey(bl))) { S.ignored.push(bl); return; }
   S.seenBank.add(bankKey(bl));
   S.accepted++;
+  // A channel paying back a shortfall it was claimed for: reference CLAIM-<batch id>. More than is owed is not a claim payment.
+  const cm = /^CLAIM-(.+)$/.exec(bl.ref || '');
+  if (cm) {
+    const claim = S.exById.get('EX-SHT-' + cm[1]);
+    if (claim && claim.kind === 'settlement_short' && claim.status !== 'resolved' && bl.amount <= claimLeft(claim)) {
+      recoverClaim(S, claim, bl.amount, '1000', { src: [bl.id], by: SYS, line: bl.id, ref: bl.id });
+      return;
+    }
+  }
   let b: Batch | undefined;
   if (/^(EP|JC|CA)-SETL-\d{4}-\d{2}-\d{2}(-\d+)?$/.test(bl.ref)) b = S.batches.get(bl.ref);
   else {
@@ -370,10 +384,36 @@ function detectMissing(S: State, asOf: number = S.today) {
   }
 }
 
+/** How much of a claimed shortfall the channel still owes. */
+export const claimLeft = (ex: Exception) => Math.max(0, ex.amount - (ex.recovered || 0));
+/** Entry params without undefined values, so stored params stay compact. */
+const clean = (p: EntryParams): EntryParams => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)) as EntryParams;
+
+/** A channel paying back a claim: Dr Bank (or Suspense, when the money was held first) / Cr Claims on channels. */
+function recoverClaim(S: State, claim: Exception, amount: number, debit: AcctCode, o: { src: string[]; by: string; ref: string; line?: string; note?: string }): Entry {
+  const b = S.batches.get(claim.batch!)!;
+  const left = claimLeft(claim) - amount;
+  const e = S.ledger.post({
+    day: S.cur, reason: 'CLAIM_RECOVERED', params: clean({ batch: b.id, ch: b.ch, batchDay: b.day, amount, diff: claim.amount, left, line: o.line, claim: claim.id, note: o.note }),
+    lines: [{ acct: debit, dr: amount }, { acct: '1300', cr: amount }], src: [b.id, ...o.src, claim.id], actor: o.by,
+  });
+  claim.recovered = (claim.recovered || 0) + amount;
+  (claim.recoveredBy ??= []).push(o.ref);
+  if (left === 0) resolveEx(S, claim, 'recovered', e.id, CH[b.ch].name + ' paid the whole shortfall back', o.by, S.cur);
+  return e;
+}
+/** A refund, or money owed back to a channel, waiting to be paid out of the bank. */
+function openPayable(S: State, o: { key: string; tid?: string; batch?: string; bid: string | null; amount: number; ch: Ch; from: string; day: number }) {
+  const id = 'EX-PAY-' + o.key;
+  if (S.exById.has(id)) return;
+  addEx(S, { id, kind: 'refund_payable', key: o.key, day: o.day, amount: o.amount, bid: o.bid, ch: o.ch, from: o.from, ...(o.tid ? { tid: o.tid } : {}), ...(o.batch ? { batch: o.batch } : {}) });
+}
+
 /* ---------------- Ops decisions and borrower reports ---------------- */
 function applyAction(S: State, a: Action) {
   const TODAY = a.at ?? S.today;
   const OPS_BY = a.by || OPS;
+  const reason = typeof a.note === 'string' && a.note.trim() ? a.note.trim().slice(0, 200) : undefined;
   S.cur = TODAY;
   if (a.type === 'report') { addReport(S, a, TODAY); return; }
   const ex = S.exById.get(a.exId);
@@ -382,34 +422,71 @@ function applyAction(S: State, a: Action) {
     const t = ex.tid ? S.txns.get(ex.tid) : undefined;
     if (!t || t.state !== 'held' || !S.bById.has(a.bid)) return;
     t.borrowerId = a.bid; t.rule = 'Ops review'; t.conf = 1;
-    const e = applyPayment(S, t, a.bid, '2100', OPS_BY, 'SUSPENSE_APPLIED', { kind: ex.kind });
+    const e = applyPayment(S, t, a.bid, '2100', OPS_BY, 'SUSPENSE_APPLIED', clean({ kind: ex.kind, note: reason }));
     t.state = 'applied';
-    resolveEx(S, ex, 'apply', e.id, 'Applied to ' + S.bById.get(a.bid)!.name, OPS_BY, TODAY);
+    resolveEx(S, ex, 'apply', e.id, 'Applied to ' + S.bById.get(a.bid)!.name, OPS_BY, TODAY, reason);
   } else if (a.type === 'refund') {
     const t = ex.tid ? S.txns.get(ex.tid) : undefined;
     if (!t || t.state !== 'held') return;
     const bid = t.borrowerId || null;
-    const e = S.ledger.post({ day: TODAY, reason: 'REFUND_DUE', params: { tid: t.tid, ch: t.ch, amount: t.amount, payDay: t.day, bid }, lines: [{ acct: '2100', dr: t.amount }, { acct: '2200', sub: bid, cr: t.amount }], src: [t.tid, ex.id], actor: OPS_BY });
+    const e = S.ledger.post({ day: TODAY, reason: 'REFUND_DUE', params: clean({ tid: t.tid, ch: t.ch, amount: t.amount, payDay: t.day, bid, note: reason }), lines: [{ acct: '2100', dr: t.amount }, { acct: '2200', sub: bid, cr: t.amount }], src: [t.tid, ex.id], actor: OPS_BY });
     t.entries.push(e.id);
     t.state = 'refund_due';
-    resolveEx(S, ex, 'refund', e.id, 'Marked for refund to sender', OPS_BY, TODAY);
+    resolveEx(S, ex, 'refund', e.id, 'Marked for refund to sender', OPS_BY, TODAY, reason);
+    openPayable(S, { key: t.tid, tid: t.tid, bid, amount: t.amount, ch: t.ch, from: ex.id, day: TODAY });
   } else if (a.type === 'accept_fee') {
     const b = ex.batch ? S.batches.get(ex.batch) : undefined;
-    if (!b || ex.kind !== 'settlement_short') return;
-    const e = S.ledger.post({ day: TODAY, reason: 'FEE_ACCEPTED', params: { batch: b.id, ch: b.ch, batchDay: b.day, diff: ex.amount }, lines: [{ acct: '5000', dr: ex.amount }, { acct: '1300', cr: ex.amount }], src: [b.id, ex.id], actor: OPS_BY });
-    resolveEx(S, ex, 'accept_fee', e.id, 'Accepted as an extra channel fee', OPS_BY, TODAY);
+    const left = claimLeft(ex);
+    if (!b || ex.kind !== 'settlement_short' || left <= 0) return;
+    const e = S.ledger.post({ day: TODAY, reason: 'FEE_ACCEPTED', params: clean({ batch: b.id, ch: b.ch, batchDay: b.day, diff: left, note: reason }), lines: [{ acct: '5000', dr: left }, { acct: '1300', cr: left }], src: [b.id, ex.id], actor: OPS_BY });
+    resolveEx(S, ex, 'accept_fee', e.id, 'Accepted as an extra channel fee', OPS_BY, TODAY, reason);
   } else if (a.type === 'claim') {
     if (ex.status === 'claimed') return;
     ex.status = 'claimed';
-    ex.claim = { day: TODAY, by: OPS_BY };
-    S.notes.push({ day: TODAY, by: OPS_BY, ex: ex.id, text: 'Claim raised with ' + (ex.ch ? CH[ex.ch].name : 'channel') });
+    ex.claim = { day: TODAY, by: OPS_BY, ...(reason ? { reason } : {}) };
+    S.notes.push({ day: TODAY, by: OPS_BY, ex: ex.id, text: 'Claim raised with ' + (ex.ch ? CH[ex.ch].name : 'channel') + (reason ? ': ' + reason : '') });
   } else if (a.type === 'ack') {
-    resolveEx(S, ex, 'ack', null, ex.kind === 'reversal' ? 'Borrower notified by SMS' : 'Checked by ops', OPS_BY, TODAY);
+    // A shortfall still claimed, or a refund still owed, can only be closed by moving the money.
+    if (ex.kind === 'settlement_short' || ex.kind === 'refund_payable') return;
+    resolveEx(S, ex, 'ack', null, ex.kind === 'reversal' ? 'Borrower notified by SMS' : 'Checked by ops', OPS_BY, TODAY, reason);
+  } else if (a.type === 'return') {
+    const b = ex.batch ? S.batches.get(ex.batch) : undefined;
+    if (!b || ex.kind !== 'settlement_over') return;
+    const e = S.ledger.post({ day: TODAY, reason: 'CHANNEL_RETURN_DUE', params: clean({ batch: b.id, ch: b.ch, batchDay: b.day, amount: ex.amount, note: reason }), lines: [{ acct: '2100', dr: ex.amount }, { acct: '2200', cr: ex.amount }], src: [b.id, ex.id], actor: OPS_BY });
+    resolveEx(S, ex, 'return', e.id, 'Owed back to ' + CH[b.ch].name, OPS_BY, TODAY, reason);
+    openPayable(S, { key: b.id, batch: b.id, bid: null, amount: ex.amount, ch: b.ch, from: ex.id, day: TODAY });
+  } else if (a.type === 'recover') {
+    const claim = S.exById.get(a.claim);
+    if (!claim || claim.kind !== 'settlement_short' || claim.status === 'resolved') return;
+    if (ex.kind === 'unexpected_deposit') {
+      const t = ex.tid ? S.txns.get(ex.tid) : undefined;
+      if (!t || t.state !== 'held' || t.amount > claimLeft(claim)) return;
+      const e = recoverClaim(S, claim, t.amount, '2100', { src: [t.tid, ex.id], by: OPS_BY, line: t.tid, ref: t.tid, note: reason });
+      t.entries.push(e.id);
+      t.state = 'applied'; t.rule = 'Claim recovery'; t.conf = 1;
+      resolveEx(S, ex, 'recover', e.id, CH[claim.ch ?? 'BR'].name + ' paying back claim ' + claim.id, OPS_BY, TODAY, reason);
+    } else if (ex.kind === 'settlement_over' && ex.batch) {
+      if (ex.ch !== claim.ch || ex.amount > claimLeft(claim)) return;
+      const e = recoverClaim(S, claim, ex.amount, '2100', { src: [ex.batch, ex.id], by: OPS_BY, ref: ex.id, note: reason });
+      resolveEx(S, ex, 'recover', e.id, 'Offset against claim ' + claim.id, OPS_BY, TODAY, reason);
+    }
+  } else if (a.type === 'paid') {
+    if (ex.kind !== 'refund_payable') return;
+    const t = ex.tid ? S.txns.get(ex.tid) : undefined;
+    const b = ex.batch ? S.batches.get(ex.batch) : undefined;
+    const ref = typeof a.ref === 'string' && a.ref.trim() ? a.ref.trim().slice(0, 60) : undefined;
+    const e = S.ledger.post({
+      day: TODAY, reason: 'REFUND_PAID',
+      params: clean({ tid: t?.tid, ch: ex.ch, amount: ex.amount, bid: ex.bid ?? null, payDay: t?.day, batch: b?.id, batchDay: b?.day, payRef: ref, note: reason }),
+      lines: [{ acct: '2200', sub: ex.bid ?? null, dr: ex.amount }, { acct: '1000', cr: ex.amount }], src: [t?.tid ?? b?.id ?? ex.key, ex.id], actor: OPS_BY,
+    });
+    if (t) { t.entries.push(e.id); t.state = 'refunded'; }
+    resolveEx(S, ex, 'paid', e.id, 'Paid out' + (ref ? ', reference ' + ref : ''), OPS_BY, TODAY, reason);
   }
 }
-function resolveEx(S: State, ex: Exception, action: string, je: string | null, note: string, by: string, day: number) {
+function resolveEx(S: State, ex: Exception, action: string, je: string | null, note: string, by: string, day: number, reason?: string) {
   ex.status = 'resolved';
-  ex.resolution = { action, je, note, by, day };
+  ex.resolution = { action, je, note, by, day, ...(reason ? { reason } : {}) };
   for (const r of S.exceptions) {
     if (r.kind === 'borrower_report' && r.linked === ex.id && r.status !== 'resolved') {
       r.status = 'resolved';

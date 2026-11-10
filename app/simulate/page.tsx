@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { AdvanceForm, BrokenForm, DepositForm, RepeatForm, ReverseForm, SandboxForm, SendForm, SettleForm } from '@/components/SimForms';
+import { AdvanceForm, BrokenForm, ClaimPaidForm, DepositForm, RepeatForm, ReverseForm, SandboxForm, SendForm, SettleForm } from '@/components/SimForms';
 import { Pill } from '@/components/ui';
 import { requireOps } from '@/lib/auth/viewer';
 import { clockFor, loadState } from '@/lib/db/store';
-import { CH, dayName, fmtDate, fmtRs } from '@/lib/engine';
+import { CH, claimLeft, dayName, fmtDate, fmtRs } from '@/lib/engine';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Channel simulator' };
@@ -22,6 +22,8 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
   const today = clockFor(book).day;
   const repeatable = S.raw.filter(r => !r.redelivery && r.payload.event !== 'payment.reversed').slice().reverse().slice(0, 20)
     .map(r => ({ id: r.id, label: r.tid + ' · ' + CH[r.ch].name }));
+  const claims = S.exceptions.filter(e => e.kind === 'settlement_short' && e.status !== 'resolved' && e.batch)
+    .map(e => ({ batch: e.batch!, left: claimLeft(e), label: e.batch + ' · ' + fmtRs(claimLeft(e)) + ' still claimed' }));
 
   return (
     <>
@@ -55,6 +57,7 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
               <RepeatForm options={repeatable} />
               <BrokenForm />
               <DepositForm />
+              <ClaimPaidForm claims={claims} />
             </div>
           </section>
           <section className="panel">

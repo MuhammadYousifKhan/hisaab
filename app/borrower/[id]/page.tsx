@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import CopySummary from '@/components/CopySummary';
@@ -10,6 +11,7 @@ import { loadView, requireBorrowerView } from '@/lib/auth/viewer';
 import { CH, REASON_UR, appliedInfo, borrowerSummary, explain, fmtDate, fmtNum, fmtRs, hhmm } from '@/lib/engine';
 import type { BorrowerSummary, Ch, Entry, Exception, Lang, State, Txn } from '@/lib/engine';
 import { CITY_UR, parseLang, tr, ts, type StrKey } from '@/lib/i18n';
+import { recordCode } from '@/lib/record';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Borrower app' };
@@ -37,7 +39,9 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
     const s = q.toString();
     return '/borrower/' + (o.bid ?? bid) + (s ? '?' + s : '');
   };
-  const ctx: Ctx = { S, sum, lang, href, bookId: book.id };
+  const h = await headers();
+  const origin = (h.get('x-forwarded-proto') ?? 'http') + '://' + (h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000');
+  const ctx: Ctx = { S, sum, lang, href, bookId: book.id, verifyUrl: origin + '/verify/' + recordCode(book.id, bid) };
 
   return (
     <>
@@ -74,7 +78,7 @@ export default async function BorrowerPage({ params, searchParams }: { params: P
   );
 }
 
-interface Ctx { S: State; sum: BorrowerSummary; lang: Lang; href: (o: { tab?: Tab; lang?: Lang; bid?: string }) => string; bookId: number }
+interface Ctx { S: State; sum: BorrowerSummary; lang: Lang; href: (o: { tab?: Tab; lang?: Lang; bid?: string }) => string; bookId: number; verifyUrl: string }
 const initials = (n: string) => n.split(' ').filter(Boolean).map(s => s[0]).slice(0, 2).join('').toUpperCase();
 const nosText = (list: number[], lang: Lang) => {
   const xs = Array.from(new Set(list));
@@ -157,7 +161,8 @@ function Change({ e, bid, lang }: { e: Entry; bid: string; lang: Lang }) {
   }
   const extras: ReactNode[] = [];
   if (credit) extras.push(tr(lang, 'creditDelta', { amt: <>{credit > 0 ? '+' : '−'}<Money v={Math.abs(credit)} lang={lang} /></> }));
-  if (refund) extras.push(tr(lang, 'refundDelta', { amt: <Money v={refund} lang={lang} /> }));
+  if (refund > 0) extras.push(tr(lang, 'refundDelta', { amt: <Money v={refund} lang={lang} /> }));
+  if (refund < 0) extras.push(tr(lang, 'refundPaidDelta', { amt: <Money v={-refund} lang={lang} /> }));
   let delta: ReactNode = null;
   if (loan) delta = <span className={'delta ' + (loan < 0 ? 'down' : 'up')}>{loan < 0 ? '−' : '+'}<Money v={Math.abs(loan)} lang={lang} /></span>;
   else if (extras.length) delta = <span className="delta cr">{extras.shift()}</span>;
@@ -175,6 +180,7 @@ function payState(p: Txn): [string, string, StrKey, string] {
   if (p.state === 'pending') return ['neutral', '…', 'st_processing', 'processing'];
   if (p.state === 'reversed') return ['crit', '↺', 'st_reversed', 'reversed'];
   if (p.state === 'refund_due') return ['warn', '↩', 'st_refund', 'refund'];
+  if (p.state === 'refunded') return ['neutral', '↩', 'st_refunded', 'refunded'];
   if (p.state === 'held') return ['warn', '?', 'st_check', 'check'];
   if (p.settled) return ['good', '✓', 'st_confirmed', 'confirmed'];
   return ['info', '→', 'st_onway', 'onway'];
@@ -209,6 +215,7 @@ function Payments({ c }: { c: Ctx }) {
           } else if (p.state === 'held') steps.push(<Step key="3" cls="hold" icon="?">{ts(lang, 's3hold')}</Step>);
           else if (p.state === 'reversed') steps.push(<Step key="3" cls="bad" icon="↺">{ts(lang, 'sRev', { ch: chName(p.ch, lang), date: fmtDate(p.reversed?.day ?? p.day, lang) })}</Step>);
           else if (p.state === 'refund_due') steps.push(<Step key="3" cls="hold" icon="↩">{ts(lang, 'sRefund')}</Step>);
+          else if (p.state === 'refunded') steps.push(<Step key="3" cls="done" icon="↩">{ts(lang, 'sRefunded')}</Step>);
         }
         return (
           <article key={p.tid} className="card pay">
@@ -228,16 +235,16 @@ function Payments({ c }: { c: Ctx }) {
   );
 }
 
-function summaryText(sum: BorrowerSummary, lang: Lang, today: number) {
+function summaryText(sum: BorrowerSummary, lang: Lang, today: number, url: string) {
   const r = sum.record, b = sum.b, loanId = sum.loan?.id ?? '—';
   if (lang === 'ur') return ['حساب: ادائیگی کا ریکارڈ', b.ur + ' · قرض ' + loanId,
     'اب تک واجب اقساط: ' + r.due + ' · ادا شدہ: ' + r.paid + ' · وقت پر: ' + r.onTime,
     'مسلسل وقت پر: ' + r.streak + ' · کل واپس ادا: ' + fmtRs(r.repaid, 'ur'),
-    fmtDate(today, 'ur', true) + ' کو ادارے کے بینک ریکارڈ سے جانچا گیا۔'].join('\n');
+    fmtDate(today, 'ur', true) + ' کو ادارے کے بینک ریکارڈ سے جانچا گیا۔', ts(lang, 'verifyLine', { url })].join('\n');
   return ['Hisaab repayment record', b.name + ' · loan ' + loanId,
     'Installments due so far: ' + r.due + ' · paid: ' + r.paid + ' · on time: ' + r.onTime,
     'On time in a row: ' + r.streak + ' · total repaid: ' + fmtRs(r.repaid),
-    'Checked against lender bank records on ' + fmtDate(today, 'en', true) + '.'].join('\n');
+    'Checked against lender bank records on ' + fmtDate(today, 'en', true) + '.', ts(lang, 'verifyLine', { url })].join('\n');
 }
 
 function Record({ c }: { c: Ctx }) {
@@ -268,9 +275,42 @@ function Record({ c }: { c: Ctx }) {
         </div>
         <p className="est-note">{ts(lang, 'recNote')}</p>
       </section>
+      {sum.insts.length > 0 && (
+        <section className="card">
+          <h3>{ts(lang, 'schTitle')}</h3>
+          <div className="tbl-wrap">
+            <table className="sched">
+              <thead><tr><th>#</th><th>{ts(lang, 'schDue')}</th><th className="n">{ts(lang, 'schAmt')}</th><th className="n">{ts(lang, 'schLeft')}</th><th /></tr></thead>
+              <tbody>
+                {sum.insts.map(i => {
+                  const cls = SQ[i.status];
+                  const pill = i.status === 'ontime' ? 'good' : i.status === 'late' ? 'warn' : i.status === 'overdue' ? 'crit' : 'neutral';
+                  return (
+                    <tr key={i.id}>
+                      <td className="num">{i.no}</td>
+                      <td className="nw">{fmtDate(i.due, lang)}</td>
+                      <td className="n"><Money v={i.amount} lang={lang} /></td>
+                      <td className="n">{i.paid >= i.amount ? '—' : <Money v={i.amount - i.paid} lang={lang} />}</td>
+                      <td><Pill cls={pill} icon={i.paid >= i.amount ? '✓' : i.status === 'overdue' ? '!' : '◷'}>{i.status === 'today' ? ts(lang, 'dueToday') : ts(lang, LBL[cls])}</Pill></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <section className="card">
-        <CopySummary text={summaryText(sum, lang, c.S.today)} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
+        <CopySummary text={summaryText(sum, lang, c.S.today, c.verifyUrl)} label={ts(lang, 'copy')} copied={ts(lang, 'copied')} fallback={ts(lang, 'copyFail')} />
       </section>
+      {sum.loan && (
+        <section className="card">
+          <h3>{ts(lang, 'shareTitle')}</h3>
+          <p className="muted">{ts(lang, 'shareLead')}</p>
+          <p className="mono small share-url" dir="ltr"><a href={c.verifyUrl}>{c.verifyUrl}</a></p>
+          <CopySummary text={c.verifyUrl} label={ts(lang, 'shareCopy')} copied={ts(lang, 'shareCopied')} fallback={ts(lang, 'copyFail')} />
+        </section>
+      )}
     </>
   );
 }

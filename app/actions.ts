@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { actorName, getSession, loadView, requireOps } from '@/lib/auth/viewer';
 import { appendAction, dbReplay, dbTryEdit, dbTryUnbalanced, loadState } from '@/lib/db/store';
-import { tryUnbalanced } from '@/lib/engine';
+import { claimLeft, tryUnbalanced } from '@/lib/engine';
 import type { Action } from '@/lib/engine';
 
 const BookId = z.coerce.number().int().positive();
@@ -42,9 +42,13 @@ export async function reportPayment(_prev: ReportState, fd: FormData): Promise<R
 }
 
 const Ops = z.object({
-  type: z.enum(['apply', 'refund', 'accept_fee', 'claim', 'ack']),
+  type: z.enum(['apply', 'refund', 'accept_fee', 'claim', 'ack', 'return', 'recover', 'paid']),
   exId: z.string().min(3).max(80),
   bid: Bid.optional().or(z.literal('')),
+  claim: z.string().max(80).optional().or(z.literal('')),
+  // The staff member's own reason, kept with the decision; and, for a payout, its reference.
+  note: z.string().trim().max(200).optional(),
+  ref: z.string().trim().max(60).optional(),
   bookId: BookId,
 });
 
@@ -52,13 +56,23 @@ export async function opsDecision(fd: FormData): Promise<void> {
   const s = await requireOps('/console?tab=queue');
   const p = Ops.safeParse(Object.fromEntries(fd));
   if (!p.success) redirect('/console?tab=queue&err=invalid');
-  const { type, exId, bid, bookId } = p.data;
+  const { type, exId, bid, claim, bookId } = p.data;
   const L = await loadState({ bookId });
   const ex = L.S.exById.get(exId);
   if (!ex || ex.status === 'resolved') redirect('/console?tab=queue&err=stale');
   if (type === 'apply' && (!bid || !L.S.bById.has(bid))) redirect('/console?tab=queue&err=borrower');
+  if (type === 'recover') {
+    const c = claim ? L.S.exById.get(claim) : undefined;
+    if (!c || c.kind !== 'settlement_short' || c.status === 'resolved') redirect('/console?tab=queue&err=claim');
+    if (ex.amount > claimLeft(c)) redirect('/console?tab=queue&err=toomuch');
+  }
+  if (type === 'paid' && ex.kind !== 'refund_payable') redirect('/console?tab=queue&err=invalid');
   const by = actorName(s);
-  const action: Action = type === 'apply' ? { type, exId, bid: bid as string, by } : { type, exId, by };
+  const extra = { by, ...(p.data.note ? { note: p.data.note } : {}) };
+  const action: Action = type === 'apply' ? { type, exId, bid: bid as string, ...extra }
+    : type === 'recover' ? { type, exId, claim: claim as string, ...extra }
+    : type === 'paid' ? { type, exId, ...(p.data.ref ? { ref: p.data.ref } : {}), ...extra }
+    : { type, exId, ...extra };
   await appendAction(L.conn, L.book.id, action);
   const after = await loadState({ bookId });
   const je = after.S.exById.get(exId)?.resolution?.je;

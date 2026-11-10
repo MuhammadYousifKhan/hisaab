@@ -1,6 +1,6 @@
 // Read-only views derived from engine state. Projections live here and never touch the ledger.
-import { ACCTS, CH, CLEARING } from './data';
-import type { AcctCode, Entry, Exception, Installment, Loan, State, Txn } from './types';
+import { ACCTS, CH, CLEARING, CLR } from './data';
+import type { AcctCode, Entry, Exception, Installment, Loan, PayCh, State, Txn } from './types';
 
 export type InstStatus = 'ontime' | 'late' | 'overdue' | 'today' | 'upcoming';
 export interface InstView extends Installment { status: InstStatus }
@@ -119,6 +119,7 @@ export function kpis(S: State) {
   let overdueTransit = 0;
   for (const b of S.batches.values()) if (b.late && !b.settled) overdueTransit += b.gross - b.clawback;
   const pend = S.txnList.filter(t => t.state === 'pending');
+  const payables = S.exceptions.filter(e => e.kind === 'refund_payable' && e.status !== 'resolved');
   return {
     bank: L.balance('1000'), fees: L.balance('5000'),
     transit: CLEARING.reduce((s, a) => s + L.balance(a), 0), overdueTransit,
@@ -126,6 +127,7 @@ export function kpis(S: State) {
     suspense: -L.balance('2100'), claims: L.balance('1300'),
     open: S.exceptions.filter(e => e.status === 'open').length, claimed: S.exceptions.filter(e => e.status === 'claimed').length,
     autoN: auto.length, successN: success.length,
+    payables: payables.reduce((s, e) => s + e.amount, 0), payablesN: payables.length,
   };
 }
 
@@ -138,6 +140,7 @@ export function txState(t: Txn): { cls: string; icon: string; label: string; key
   if (t.state === 'pending') return { cls: 'neutral', icon: '…', label: 'Pending', key: 'pending' };
   if (t.state === 'reversed') return { cls: 'crit', icon: '↺', label: 'Reversed', key: 'reversed' };
   if (t.state === 'refund_due') return { cls: 'warn', icon: '↩', label: 'Refund due', key: 'refund_due' };
+  if (t.state === 'refunded') return { cls: 'neutral', icon: '↩', label: 'Refunded', key: 'refunded' };
   if (t.state === 'held') return { cls: 'warn', icon: '?', label: 'Held', key: 'held' };
   if (t.settled) return { cls: 'good', icon: '✓', label: 'Settled', key: 'settled' };
   if (t.batchLate) return { cls: 'crit', icon: '!', label: 'Settlement overdue', key: 'transit' };
@@ -145,3 +148,32 @@ export function txState(t: Txn): { cls: string; icon: string; label: string; key
 }
 
 export const chName = (ch: keyof typeof CH, lang: 'en' | 'ur' = 'en') => (lang === 'ur' ? CH[ch].ur : CH[ch].name);
+
+export interface ChannelRow {
+  ch: PayCh; payments: number; collected: number; auto: number; reversed: number;
+  fees: number; extraFees: number; shortfall: number; recovered: number; claimOpen: number; over: number;
+  transit: number; overdue: number;
+}
+/** Fees, shortfalls and money in transit per channel, all from posted entries and settled batches (actuals only). */
+export function channelSummary(S: State): ChannelRow[] {
+  const rows = (['EP', 'JC', 'CA', 'RA'] as PayCh[]).map((ch): ChannelRow => {
+    const ok = S.txnList.filter(t => t.ch === ch && t.status === 'success' && t.state !== 'pending');
+    const batches = Array.from(S.batches.values()).filter(b => b.ch === ch);
+    const ex = S.exceptions.filter(e => e.ch === ch);
+    const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+    const byReason = (r: string, f: (e: Entry) => number) => sum(S.ledger.entries.filter(e => e.reason === r && e.params.ch === ch).map(f));
+    return {
+      ch, payments: ok.length, collected: sum(ok.map(t => t.amount)), auto: ok.filter(t => t.autoRule && !t.heldOnce).length,
+      reversed: sum(ok.filter(t => t.state === 'reversed').map(t => t.amount)),
+      fees: sum(batches.filter(b => b.settled).map(b => b.fee ?? 0)),
+      extraFees: byReason('FEE_ACCEPTED', e => e.params.diff ?? 0),
+      shortfall: sum(ex.filter(e => e.kind === 'settlement_short').map(e => e.amount)),
+      recovered: byReason('CLAIM_RECOVERED', e => e.params.amount ?? 0),
+      claimOpen: sum(ex.filter(e => e.kind === 'settlement_short' && e.status !== 'resolved').map(e => e.amount - (e.recovered || 0))),
+      over: sum(ex.filter(e => e.kind === 'settlement_over').map(e => e.amount)),
+      transit: S.ledger.balance(CLR[ch]),
+      overdue: sum(batches.filter(b => b.late && !b.settled).map(b => b.gross - b.clawback)),
+    };
+  });
+  return rows;
+}

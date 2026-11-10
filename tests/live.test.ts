@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { borrowerSummary, buildLive, explain, iso, replayFiles, runChecks } from '@/lib/engine';
+import { borrowerSummary, buildLive, explain, iso, replayFiles, runChecks, stateCoverage, traceChecks } from '@/lib/engine';
 import type { Action, LiveInputs, PayCh, PayStatus, State } from '@/lib/engine';
 import { paymentPayload, rawEventFor, reversalPayload, type PaymentSpec } from '@/lib/ingest/payloads';
 
@@ -16,6 +16,12 @@ function mulberry32(seed: number): () => number {
 }
 
 const failing = (S: State) => runChecks(S).filter(c => !c.pass).map(c => c.title + ': ' + c.value);
+/** Ledger checks, traceability checks, and every exceptional state handled as designed. */
+const allFailing = (S: State) => [
+  ...failing(S),
+  ...traceChecks(S).filter(c => !c.pass).map(c => c.title + ': ' + c.value),
+  ...stateCoverage(S).filter(r => r.bad).map(r => r.label + ': ' + r.bad + ' mishandled (' + r.example + ')'),
+];
 const fingerprint = (S: State) => S.ledger.entries.map(e => JSON.stringify([e.id, e.day, e.reason, e.params, e.lines, e.src, e.actor, e.reverses, explain(e, 'en')]));
 
 /** Builds live-book inputs the way the database stores them: each one stamped with an arrival number. */
@@ -112,7 +118,7 @@ describe('live book', () => {
   it('matches, holds, settles and explains real inputs', () => {
     const L = story();
     const S = L.build(80);
-    expect(failing(S)).toEqual([]);
+    expect(allFailing(S)).toEqual([]);
 
     const t = (tid: string) => S.txnList.filter(x => x.tid === tid);
     expect(t('JC20000001')[0]).toMatchObject({ rule: 'R1', borrowerId: 'B002', state: 'applied' });
@@ -175,6 +181,152 @@ describe('live book', () => {
   });
 });
 
+/* ---------- Closing the loop: claims, returns and refunds end with money moving, never a checkbox ---------- */
+function twoBorrowers() {
+  const L = new Live();
+  L.at(70, 540);
+  L.borrower('B001', 'Ali Raza', '03001234567', 'JC');
+  L.borrower('B002', 'Sara Khan', '03111234567', 'EP');
+  L.loan('L001', 'B001', 12000, 2400, 12, 72); // Rs 1,200 a week
+  L.loan('L002', 'B002', 12000, 2400, 12, 72);
+  return L;
+}
+const EP72 = () => 'EP-SETL-' + iso(72);
+const JC72 = () => 'JC-SETL-' + iso(72);
+
+describe('closing the loop', () => {
+  it('a refund stays owed until it is paid out, then the payment shows as refunded', () => {
+    const L = twoBorrowers();
+    L.at(72, 600);
+    L.pay({ ch: 'JC', tid: 'JC100001', amount: 120000, phone: '03001234567' });
+    L.pay({ ch: 'JC', tid: 'JC100002', amount: 120000, phone: '03001234567' });
+    L.at(73, 600);
+    L.act({ type: 'refund', exId: 'EX-DUP-JC100002', note: 'Borrower confirmed the app retried' });
+    let S = L.build(73);
+    expect(S.exById.get('EX-PAY-JC100002')).toMatchObject({ kind: 'refund_payable', status: 'open', amount: 120000, bid: 'B001' });
+    expect(S.exById.get('EX-DUP-JC100002')!.resolution).toMatchObject({ reason: 'Borrower confirmed the app retried', by: 'ops: Test' });
+    expect(S.ledger.entries.find(e => e.reason === 'REFUND_DUE')!.params.note).toBe('Borrower confirmed the app retried');
+    expect(allFailing(S)).toEqual([]);
+
+    L.act({ type: 'paid', exId: 'EX-PAY-JC100002', ref: 'JC-PAYOUT-77' });
+    S = L.build(73);
+    expect(S.txns.get('JC100002')!.state).toBe('refunded');
+    const e = S.ledger.entries.find(x => x.reason === 'REFUND_PAID')!;
+    expect(e.lines).toEqual([{ acct: '2200', sub: 'B001', dr: 120000, cr: 0 }, { acct: '1000', sub: null, dr: 0, cr: 120000 }]);
+    expect(explain(e, 'en')).toContain('JC-PAYOUT-77');
+    expect(explain(e, 'ur')).toMatch(/[؀-ۿ]/);
+    expect(S.ledger.balance('2200')).toBe(0);
+    expect(allFailing(S)).toEqual([]);
+  });
+
+  it('a channel pays back a shortfall in parts, and what is left can be accepted as a fee', () => {
+    const L = twoBorrowers();
+    L.at(72, 600);
+    L.pay({ ch: 'EP', tid: 'EP100001', amount: 120000, phone: '03111234567' });
+    L.at(73, 560);
+    L.bankLine(118560 - 15000, EP72(), 'EASYPAISA SETTLEMENT'); // Rs 150 short after the 1.2% fee
+    L.at(74, 600);
+    L.bankLine(10000, 'CLAIM-' + EP72(), 'EASYPAISA CLAIM');
+    let S = L.build(74);
+    const claim = 'EX-SHT-' + EP72();
+    expect(S.exById.get(claim)).toMatchObject({ status: 'open', amount: 15000, recovered: 10000 });
+    expect(S.ledger.balance('1300')).toBe(5000);
+    expect(explain(S.ledger.entries.find(e => e.reason === 'CLAIM_RECOVERED')!)).toContain('Rs 50 is still claimed');
+    expect(allFailing(S)).toEqual([]);
+
+    L.bankLine(20000, 'CLAIM-' + EP72(), 'EASYPAISA CLAIM'); // more than is still owed: held, not guessed
+    L.act({ type: 'accept_fee', exId: claim });
+    S = L.build(74);
+    expect(S.exById.get(claim)!.status).toBe('resolved');
+    expect(S.ledger.entries.find(e => e.reason === 'FEE_ACCEPTED')!.params.diff).toBe(5000);
+    expect(S.exceptions.some(e => e.kind === 'unexpected_deposit' && e.amount === 20000 && e.status === 'open')).toBe(true);
+    expect(S.ledger.balance('1300')).toBe(0);
+    expect(allFailing(S)).toEqual([]);
+  });
+
+  it('an over-settlement is owed back to the channel, then paid', () => {
+    const L = twoBorrowers();
+    L.at(72, 600);
+    L.pay({ ch: 'EP', tid: 'EP100001', amount: 120000, phone: '03111234567' });
+    L.at(73, 560);
+    L.bankLine(118560 + 5000, EP72(), 'EASYPAISA SETTLEMENT');
+    L.at(73, 700);
+    L.act({ type: 'return', exId: 'EX-OVR-' + EP72() });
+    let S = L.build(73);
+    const pay = S.exById.get('EX-PAY-' + EP72())!;
+    expect(pay).toMatchObject({ kind: 'refund_payable', amount: 5000, status: 'open', bid: null });
+    expect(S.ledger.balance('2100')).toBe(0);
+    expect(allFailing(S)).toEqual([]);
+
+    L.act({ type: 'paid', exId: pay.id, ref: 'IBFT-12' });
+    S = L.build(73);
+    expect(S.exById.get(pay.id)!.status).toBe('resolved');
+    expect(S.ledger.balance('2200')).toBe(0);
+    expect(explain(S.ledger.entries.find(e => e.reason === 'REFUND_PAID')!)).toContain('paid back to Easypaisa');
+    expect(allFailing(S)).toEqual([]);
+  });
+
+  it('money held in suspense can pay back an open claim on the same channel', () => {
+    const L = twoBorrowers();
+    L.at(72, 600);
+    L.pay({ ch: 'JC', tid: 'JC100001', amount: 120000, phone: '03001234567' });
+    L.pay({ ch: 'EP', tid: 'EP100001', amount: 120000, phone: '03111234567' });
+    L.at(73, 560);
+    L.bankLine(118200 - 15000, JC72(), 'JAZZCASH SETTLEMENT'); // Rs 150 short after the 1.5% fee
+    L.bankLine(118560 + 5000, EP72(), 'EASYPAISA SETTLEMENT'); // Rs 50 over
+    L.at(74, 600);
+    L.bankLine(7000, '', 'IBFT CR JAZZ ADJ');
+    L.pay({ ch: 'JC', tid: 'JC100002', amount: 120000, phone: '03001234567' });
+    let S = L.build(74);
+    const dep = S.exceptions.find(e => e.kind === 'unexpected_deposit')!;
+    const claim = 'EX-SHT-' + JC72();
+    L.act({ type: 'recover', exId: 'EX-OVR-' + EP72(), claim }); // refused: a different channel's money
+    L.act({ type: 'recover', exId: dep.id, claim, note: 'JazzCash confirmed by email' });
+    L.act({ type: 'ack', exId: claim }); // refused: a claim closes only when money moves or a fee is accepted
+    S = L.build(74);
+    expect(S.exById.get('EX-OVR-' + EP72())!.status).toBe('open');
+    expect(S.exById.get(dep.id)!.status).toBe('resolved');
+    expect(S.exById.get(claim)).toMatchObject({ status: 'open', recovered: 7000 });
+    expect(S.txns.get(dep.tid!)).toMatchObject({ state: 'applied', rule: 'Claim recovery', borrowerId: null });
+    expect(allFailing(S)).toEqual([]);
+
+    L.at(75, 560);
+    L.bankLine(118200 + 8000, 'JC-SETL-' + iso(74), 'JAZZCASH SETTLEMENT'); // Rs 80 over: the rest of the claim
+    L.at(75, 600);
+    L.act({ type: 'recover', exId: 'EX-OVR-JC-SETL-' + iso(74), claim });
+    S = L.build(75);
+    expect(S.exById.get(claim)).toMatchObject({ status: 'resolved', recovered: 15000 });
+    expect(S.exById.get('EX-OVR-JC-SETL-' + iso(74))!.resolution?.action).toBe('recover');
+    expect(S.ledger.balance('1300')).toBe(0);
+    expect(allFailing(S)).toEqual([]);
+  });
+
+  it('a reversal cancels a refund that was not paid out yet', () => {
+    const L = twoBorrowers();
+    L.at(72, 600);
+    L.pay({ ch: 'JC', tid: 'JC100001', amount: 120000, phone: '03001234567' });
+    L.pay({ ch: 'JC', tid: 'JC100002', amount: 120000, phone: '03001234567' });
+    L.act({ type: 'refund', exId: 'EX-DUP-JC100002' });
+    L.at(73, 600);
+    L.raw('JC', reversalPayload('JC100002', 'Disputed by account holder', 73, 500));
+    const S = L.build(73);
+    expect(S.txns.get('JC100002')!.state).toBe('reversed');
+    expect(S.exById.get('EX-PAY-JC100002')).toMatchObject({ status: 'resolved', resolution: { action: 'auto' } });
+    expect(S.ledger.balance('2200')).toBe(0);
+    expect(allFailing(S)).toEqual([]);
+  });
+
+  it('the story book shows every exceptional state it contains, each handled as designed', () => {
+    const S = story().build(80);
+    const rows = Object.fromEntries(stateCoverage(S).map(r => [r.key, r]));
+    for (const k of ['repeat', 'malformed', 'failed', 'reversed', 'orphan', 'short', 'missing', 'latebatch']) {
+      expect(rows[k].count, k).toBeGreaterThan(0);
+      expect(rows[k].bad, k).toBe(0);
+    }
+    expect(traceChecks(S).every(c => c.pass)).toBe(true);
+  });
+});
+
 /* ---------- Random live books: any sequence of inputs keeps the books consistent ---------- */
 const NAMES = ['Ali Raza', 'Sara Khan', 'Muhammad Ali', 'Muhammad Ali', 'Hina Baloch', 'Zubair Shah'];
 function randomBook(seed: number): { L: Live; last: number } {
@@ -232,17 +384,29 @@ function randomBook(seed: number): { L: Live; last: number } {
       const open = S.exceptions.filter(e => e.status !== 'resolved' && e.kind !== 'borrower_report');
       if (!open.length) continue;
       const e = pick(open);
-      if (['orphan_payment', 'reference_conflict', 'unexpected_deposit', 'possible_duplicate'].includes(e.kind)) {
+      const claims = S.exceptions.filter(c => c.kind === 'settlement_short' && c.status !== 'resolved');
+      if (e.kind === 'unexpected_deposit' && claims.length && r() < 0.3) L.act({ type: 'recover', exId: e.id, claim: pick(claims).id, note: 'Channel confirmed' });
+      else if (['orphan_payment', 'reference_conflict', 'unexpected_deposit', 'possible_duplicate'].includes(e.kind)) {
         L.act(r() < 0.75 ? { type: 'apply', exId: e.id, bid: pick(people).id } : { type: 'refund', exId: e.id });
       } else if (e.kind === 'settlement_short') L.act(r() < 0.5 ? { type: 'accept_fee', exId: e.id } : { type: 'claim', exId: e.id });
-      else if (e.kind === 'missing_deposit' || e.kind === 'settlement_over') L.act({ type: 'claim', exId: e.id });
+      else if (e.kind === 'settlement_over') {
+        const claims = S.exceptions.filter(c => c.kind === 'settlement_short' && c.status !== 'resolved' && c.ch === e.ch);
+        const y = r();
+        L.act(y < 0.4 ? { type: 'return', exId: e.id } : y < 0.7 && claims.length ? { type: 'recover', exId: e.id, claim: pick(claims).id } : { type: 'claim', exId: e.id });
+      } else if (e.kind === 'missing_deposit') L.act({ type: 'claim', exId: e.id });
+      else if (e.kind === 'refund_payable') L.act({ type: 'paid', exId: e.id, ref: 'PAYOUT-' + s });
       else L.act({ type: 'ack', exId: e.id });
     } else if (x < 0.96) {
       const S = L.build(day);
       const t = S.txnList.length ? pick(S.txnList) : null;
       L.act({ type: 'report', n: ++reports, bid: pick(people).id, ch: 'JC', amount: 100000, day, tid: t ? t.tid : 'JC99999999' });
     } else if (x < 0.98) {
-      L.bankLine(ri(10, 90) * 10000, '', 'CASH DEPOSIT BR-' + ri(1000, 9999));
+      const S = L.build(day);
+      const claims = S.exceptions.filter(c => c.kind === 'settlement_short' && c.status !== 'resolved');
+      if (claims.length && r() < 0.6) {
+        const c = pick(claims);
+        L.bankLine(Math.max(100, Math.round((c.amount - (c.recovered || 0)) * pick([1, 0.5, 2]))), 'CLAIM-' + c.batch, 'CLAIM PAYMENT');
+      } else L.bankLine(ri(10, 90) * 10000, '', 'CASH DEPOSIT BR-' + ri(1000, 9999));
     } else {
       L.raw('EP', { event: 'payment.completed', txn_id: 'EP-BAD-' + s, amount_pkr: 'lots' });
     }
@@ -256,7 +420,7 @@ describe('random live books (property test)', () => {
       fc.property(fc.integer({ min: 1, max: 2_000_000_000 }), seed => {
         const { L, last } = randomBook(seed);
         const S = L.build(last + 3);
-        expect(failing(S)).toEqual([]);
+        expect(allFailing(S)).toEqual([]);
         const r = mulberry32(seed ^ 0x5bd1e995);
         const ks = Array.from({ length: 4 }, () => 1 + Math.floor(r() * L.ord));
         expectPrefixes(L, ks, last + 3);

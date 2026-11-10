@@ -29,7 +29,7 @@ export interface RawEvent extends Arrival {
 export interface BankLine extends Arrival { id: string; day: number; min: number; amount: number; ref: string; narration: string; key?: string }
 
 export type PayStatus = 'success' | 'failed' | 'pending';
-export type TxnState = 'applied' | 'held' | 'failed' | 'pending' | 'reversed' | 'refund_due';
+export type TxnState = 'applied' | 'held' | 'failed' | 'pending' | 'reversed' | 'refund_due' | 'refunded';
 export interface Suggest { bid: string; why: string }
 export interface Txn {
   tid: string; ch: Ch; day: number; min: number; amount: number; phone: string | null; name: string | null; ref: string;
@@ -53,6 +53,8 @@ export interface EntryParams {
   phone?: string | null; ref?: string; kind?: ExKind; reason?: string; nos?: number[];
   batch?: string; batchDay?: number; count?: number; gross?: number; bps?: number; clawback?: number; net?: number;
   expectedNet?: number; diff?: number; line?: string;
+  /** A staff member's own reason for a decision, and a payout reference. Not part of the entry's hash. */
+  note?: string; payRef?: string; claim?: string; left?: number;
 }
 export interface LineIn { acct: AcctCode; sub?: string | null; dr?: number; cr?: number }
 export interface Line { acct: AcctCode; sub: string | null; dr: number; cr: number }
@@ -69,23 +71,32 @@ export interface Ledger {
 
 export type ExKind =
   | 'orphan_payment' | 'reference_conflict' | 'possible_duplicate' | 'reversal' | 'unexpected_deposit'
-  | 'missing_deposit' | 'settlement_short' | 'settlement_over' | 'borrower_report';
+  | 'missing_deposit' | 'settlement_short' | 'settlement_over' | 'borrower_report' | 'refund_payable';
 export type ExStatus = 'open' | 'claimed' | 'resolved';
-export interface Resolution { action: string; je: string | null; note: string; by: string; day: number }
+/** note is what happened; reason is the staff member's own words, when they gave any. */
+export interface Resolution { action: string; je: string | null; note: string; by: string; day: number; reason?: string }
 export interface Exception {
   id: string; kind: ExKind; key: string; day: number; amount: number; status: ExStatus;
   tid?: string | null; bid?: string | null; suggest?: Suggest | null; ch?: Ch;
   refBid?: string; dupOf?: string; reason?: string; nos?: number[]; batch?: string; lineId?: string;
-  claim?: { day: number; by: string }; resolution?: Resolution;
+  claim?: { day: number; by: string; reason?: string }; resolution?: Resolution;
   payDay?: number; reportedTid?: string; finding?: string; linked?: string | null;
+  /** Claims: how much of the shortfall the channel has paid back so far, and the bank lines or items that paid it. */
+  recovered?: number; recoveredBy?: string[];
+  /** Refunds to pay: the review item the refund came from. */
+  from?: string;
 }
 
 /** Human input. `at` is the day it was recorded and `by` who recorded it. */
 export type Action = (
   | { type: 'report'; n: number; bid: string; ch: Ch; amount: number; day: number; tid: string }
   | { type: 'apply'; exId: string; bid: string }
-  | { type: 'refund' | 'accept_fee' | 'claim' | 'ack'; exId: string }
-) & { at?: number; by?: string; ord?: number };
+  | { type: 'refund' | 'accept_fee' | 'claim' | 'ack' | 'return'; exId: string }
+  /** Money held in suspense (a deposit with no record, or an over-settlement) is the channel paying back an open claim. */
+  | { type: 'recover'; exId: string; claim: string }
+  /** A refund or a return to a channel has been paid out of the bank. ref is the payout's own reference. */
+  | { type: 'paid'; exId: string; ref?: string }
+) & { at?: number; by?: string; ord?: number; note?: string };
 
 export interface Quarantined { re: RawEvent; error: string }
 

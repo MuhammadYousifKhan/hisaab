@@ -153,6 +153,11 @@ export const applications = pgTable('applications', {
   amountPaisa: bigint('amount_paisa', { mode: 'number' }).notNull(),
   weeks: integer('weeks').notNull(),
   pinHash: text('pin_hash').notNull(),
+  /** What a thin-file applicant can tell us instead of a credit file: declared income, time in their work, and a reference. */
+  incomePaisa: bigint('income_paisa', { mode: 'number' }),
+  workYears: integer('work_years'),
+  refName: text('ref_name'),
+  refPhone: text('ref_phone'),
   status: text('status').notNull().default('pending'),
   borrowerId: text('borrower_id'),
   decidedBy: text('decided_by'),
@@ -224,6 +229,10 @@ CREATE TABLE IF NOT EXISTS applications (
   pin_hash text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
   borrower_id text, decided_by text, decided_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS applications_one_pending ON applications (book_id, phone) WHERE status = 'pending';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS income_paisa bigint;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS work_years integer;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS ref_name text;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS ref_phone text;
 CREATE TABLE IF NOT EXISTS borrower_logins (
   book_id integer NOT NULL REFERENCES books(id), borrower_id text NOT NULL, pin_hash text NOT NULL,
   failed integer NOT NULL DEFAULT 0, locked_until timestamptz, updated_at timestamptz NOT NULL DEFAULT now(),

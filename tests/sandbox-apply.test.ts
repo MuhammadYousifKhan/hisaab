@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { hashSecret } from '@/lib/auth/password';
-import { applicationFor, approveApplication, createApplication, declineApplication, listApplications } from '@/lib/db/applications';
+import { affordability, applicationFor, approveApplication, createApplication, declineApplication, listApplications } from '@/lib/db/applications';
 import { memoryConn, type Conn } from '@/lib/db/client';
 import { checkBorrowerPin } from '@/lib/db/people';
 import { clockFor, currentBook, dbChecks, loadState } from '@/lib/db/store';
-import { runChecks } from '@/lib/engine';
+import { runChecks, stateCoverage, traceChecks } from '@/lib/engine';
+import { readRecordCode, recordCode } from '@/lib/record';
 import { runSandbox } from '@/lib/sandbox';
 
 let conn: Conn;
@@ -12,7 +13,7 @@ beforeAll(async () => { conn = await memoryConn(); });
 
 const failing = async () => {
   const L = await loadState({ conn });
-  return [...runChecks(L.S), ...(await dbChecks(L))].filter(c => !c.pass).map(c => c.title + ': ' + c.value);
+  return [...runChecks(L.S), ...traceChecks(L.S), ...(await dbChecks(L))].filter(c => !c.pass).map(c => c.title + ': ' + c.value);
 };
 
 describe('sandbox scenario', () => {
@@ -20,11 +21,20 @@ describe('sandbox scenario', () => {
     for (let run = 0; run < 2; run++) {
       const r = await runSandbox(conn, 'ops: Test');
       expect(r.steps.filter(s => !s.ok).map(s => s.label + ' ' + s.detail)).toEqual([]);
-      expect(r.steps.length).toBeGreaterThanOrEqual(19);
+      expect(r.steps.length).toBeGreaterThanOrEqual(22);
       expect(r.borrowers).toHaveLength(4);
       expect(await failing()).toEqual([]);
     }
   }, 60000);
+
+  it('the sandbox book shows the exceptional states on Proof, each handled as designed', async () => {
+    const S = (await loadState({ conn })).S;
+    const rows = stateCoverage(S);
+    expect(rows.filter(r => r.bad)).toEqual([]);
+    for (const k of ['repeat', 'malformed', 'failed', 'pending', 'partial', 'overpaid', 'duplicate', 'orphan', 'wrongref', 'deposit', 'reversed', 'short', 'claimpaid', 'overset', 'missing', 'report']) {
+      expect(rows.find(r => r.key === k)?.count, k).toBeGreaterThan(0);
+    }
+  });
 
   it('sandbox borrowers can sign in with the sandbox PIN', async () => {
     const L = await loadState({ conn });
@@ -59,6 +69,20 @@ describe('loan applications', () => {
     expect(await failing()).toEqual([]);
   });
 
+  it('keeps what a thin-file applicant tells us, and gives staff an affordability guide', async () => {
+    const book = await currentBook(conn);
+    const a = await createApplication(conn, book.id, { ...form, phone: '03465554433', income: 3000000, workYears: 3, refName: 'Haji Bashir', refPhone: '03001112222' }, await hashSecret('2468'));
+    const row = (await listApplications(conn, book.id)).find(x => x.id === (a as { id: number }).id)!;
+    expect(row).toMatchObject({ incomePaisa: 3000000, workYears: 3, refName: 'Haji Bashir', refPhone: '03001112222' });
+    // Rs 20,000 + 20% over 12 weeks is Rs 2,000 a week; Rs 30,000 a month is about Rs 6,923 a week, so 29%.
+    const af = affordability({ amountPaisa: 2000000, weeks: 12, incomePaisa: 3000000 })!;
+    expect(af.installment).toBe(200000);
+    expect(Math.round(af.share * 100)).toBe(29);
+    expect(af.level).toBe('warn');
+    expect(af.maxPrincipal).toBe(1700000);
+    expect(affordability({ amountPaisa: 2000000, weeks: 12, incomePaisa: null })).toBeNull();
+  });
+
   it('a declined application stays declined and opens nothing', async () => {
     const book = await currentBook(conn);
     const a = await createApplication(conn, book.id, { ...form, phone: '03469998877' }, await hashSecret('7788'));
@@ -69,5 +93,16 @@ describe('loan applications', () => {
     expect((await listApplications(conn, book.id)).some(x => x.id === id)).toBe(false);
     const L = await loadState({ conn });
     expect(L.S.borrowers.some(b => b.phone === '03469998877')).toBe(false);
+  });
+});
+
+describe('verified repayment record links', () => {
+  it('a signed link names one borrower in one book, and a changed link is refused', () => {
+    const code = recordCode(3, 'B012', 'secret-a');
+    expect(readRecordCode(code, 'secret-a')).toEqual({ bookId: 3, bid: 'B012' });
+    expect(readRecordCode(code.replace('B012', 'B013'), 'secret-a')).toBeNull();
+    expect(readRecordCode(code.replace(/^3-/, '4-'), 'secret-a')).toBeNull();
+    expect(readRecordCode(code, 'secret-b')).toBeNull();
+    expect(readRecordCode('nonsense', 'secret-a')).toBeNull();
   });
 });
