@@ -31,9 +31,9 @@ No database setup is needed: by default the app runs an embedded Postgres ([PGli
 
 ## Using it
 
-**Apply** at `/apply` (no sign-in, no credit history needed): name, mobile number, work, amount, weeks and a PIN. Staff approve or decline in Console › Borrowers & loans; approving opens the account with the applicant's own PIN and issues the loan.
+**Apply** at `/apply` (no sign-in, no credit history needed), in English or Urdu: name, mobile number, work, how long they have done it, monthly income, an optional reference, amount, weeks and a PIN. Staff see all of that in Console › Borrowers & loans, with one guide: whether the weekly installment stays within a quarter of the applicant's weekly income (declared, not verified). They approve or decline; approving opens the account with the applicant's own PIN and issues the loan.
 
-**Sign in** at `/login`. One form: a mobile number and PIN opens a borrower's account; a username and password opens the lender console. An applicant who signs in before approval is told the application is still being reviewed.
+**Sign in** at `/login`, in English or Urdu. One form: a mobile number and PIN opens a borrower's account; a username and password opens the lender console. An applicant who signs in before approval is told the application is still being reviewed.
 
 ### Test accounts
 
@@ -50,18 +50,22 @@ To try the borrower side: apply at `/apply` with any mobile number and a PIN, si
 **Staff**
 1. Console › Borrowers & loans: add a borrower (a mobile number and a PIN), then issue a loan. The disbursement is posted to the journal.
 2. Payments arrive by webhook, by file upload (Console › Intake), or from the Simulator, which stands in for the channels and the bank until they are connected.
-3. Console › Review queue: anything that couldn't be matched safely waits here. Each decision is recorded under the signed-in staff member.
+3. Console › Review queue: anything that couldn't be matched safely waits here. Each decision is recorded under the signed-in staff member, with an optional reason in their own words that stays with the entry.
+4. Cases end with money moving, not a tick box. A shortfall is a claim on the channel until the channel pays it back (a bank credit quoting `CLAIM-<batch>` is matched automatically, or staff link a deposit or an over-settlement to the claim) or staff accept the rest as a fee. A refund, or an over-settlement owed back to a channel, becomes a *refund to pay out* until staff record the payout and its reference; only then does it leave the books.
+5. Console › Settlements shows fees, shortfalls, claims paid back, over-settlements and money in transit per channel.
 
-**Borrowers** see what they owe, where each payment is, why the balance changed, a repayment record, and can report a missing payment. English and Urdu.
+**Borrowers** see what they owe, where each payment is, why the balance changed, their installment schedule, a repayment record, and can report a missing payment. English and Urdu.
 
-**Sandbox scenario.** Simulator › Run sandbox scenario adds four sandbox borrowers and sends one of every payment situation through the real intake: normal, repeat delivery, paid twice, failed, partial, overpaid, reversed, paid from an unknown phone (with the borrower's report), wrong loan reference, pending, malformed, bank deposit with no record, short, over, exact and missing settlements. It then checks each one and lists the result. The Simulator can also send any single event on its own.
+**Verified record.** From My record a borrower copies a link. Whoever opens it (`/verify/…`, no sign-in) sees the record recomputed from the ledger at that moment: first name, loan size and payment record, nothing else. The link is signed with `SESSION_SECRET`, so a borrower ID can't be turned into a valid link and the record can't be edited. It is a record with this one lender, not a credit score.
 
-**Proof** (`/proof`, no sign-in) shows the ledger checks, live. On an empty book it says so; run the sandbox scenario first.
+**Sandbox scenario.** Simulator › Run sandbox scenario adds four sandbox borrowers and sends one of every payment situation through the real intake: normal, repeat delivery, paid twice, failed, partial, overpaid, reversed, paid from an unknown phone (with the borrower's report), wrong loan reference, pending, malformed, bank deposit with no record, short, over, exact and missing settlements, and a channel paying back part of a shortfall. It then checks each one, plus the ledger and traceability checks, and lists the result. The Simulator can also send any single event on its own.
+
+**Proof** (`/proof`, no sign-in) runs live: ledger consistency (balances, trial balance, replay, and each of suspense, claims and refunds payable explained to the paisa by open items), traceability (every entry back to the payload or bank line it came from, every settlement to one bank line, every bank credit accounted for, every staff decision attributed, every borrower-visible change explained in English and Urdu), and database guards. A table lists each exceptional payment state, how many this book has seen and whether each was handled as designed. On an empty book it says so; run the sandbox scenario first.
 
 ## Getting data in
 
 - **Webhooks:** `POST /api/channels/{easypaisa|jazzcash|raast|agent}` with `Authorization: Bearer $INGEST_TOKEN`. One payload, or an array of up to 500. Answers `202` accepted, `200` repeat delivery, `422` quarantined, `401` bad token. Payload shapes are in `lib/ingest/payloads.ts`.
-- **Bank statement:** `POST /api/bank/statement` with a JSON array of `{ date, time?, amount, narration, ref?, bank_ref? }`, or upload a CSV in Console › Intake. Only credits are taken. Re-sending a statement adds nothing. A `ref` such as `EP-SETL-2026-11-08` or `RAAST-<id>` settles that batch; any other credit is held as a deposit with no record.
+- **Bank statement:** `POST /api/bank/statement` with a JSON array of `{ date, time?, amount, narration, ref?, bank_ref? }`, or upload a CSV in Console › Intake. Only credits are taken. Re-sending a statement adds nothing. A `ref` such as `EP-SETL-2026-11-08` or `RAAST-<id>` settles that batch; `CLAIM-<batch id>` pays back that batch's shortfall; any other credit is held as a deposit with no record.
 - **Agent file:** Console › Intake takes the daily CSV (`receipt_no, agent_id, customer_ref, customer_name, amount, status, collected_at`).
 
 ## How it works
@@ -75,7 +79,7 @@ Webhooks / uploads → channel adapters (Zod) → raw event store (append-only)
 - **Event-sourced.** Borrowers, loans, channel events, bank lines and human decisions are stored exactly as received, each numbered in arrival order. The journal is rebuilt from them, so the stored entries are always an exact prefix of any later replay. Each stored entry carries a SHA-256 hash, which the Proof page checks.
 - **Double-entry, integer paisa.** The engine's `post()` refuses an unbalanced entry, and so does Postgres: a deferred constraint trigger checks each entry at commit.
 - **Append-only.** Triggers reject `UPDATE` and `DELETE` on the journal, raw events, bank lines, decisions, borrowers and loans. Corrections are new reversing entries.
-- **Matching.** By loan reference, then registered phone, then account name (never when two borrowers share a name). Daily channel batches are settled against bank lines: batch total − fee − reversals = deposit. A payment that reaches a batch after it settled goes into a follow-up batch (`…-2`).
+- **Matching.** By loan reference, then registered phone, then account name (never when two borrowers share a name). Daily channel batches are settled against bank lines: batch total − fee − reversals = deposit. A payment that reaches a batch after it settled goes into a follow-up batch (`…-2`). Shortfalls, over-settlements and refunds each have a lifecycle that ends in a posted entry (`CLAIM_RECOVERED`, `FEE_ACCEPTED`, `CHANNEL_RETURN_DUE`, `REFUND_PAID`).
 - **Actual vs projection.** Projections come from a separate function, are drawn dashed and hatched, and are never posted or added to actual totals.
 
 | Area | Files |
@@ -84,7 +88,9 @@ Webhooks / uploads → channel adapters (Zod) → raw event store (append-only)
 | Database | `lib/db/` (tables and triggers in `schema.ts`) |
 | Intake | `lib/ingest/`, `app/api/` |
 | Sign-in | `lib/auth/`, `app/login/` |
-| Screens | `app/borrower`, `app/console`, `app/simulate`, `app/proof`, `components/` |
+| Verified record links | `lib/record.ts`, `app/verify/` |
+| Screens | `app/borrower`, `app/console`, `app/simulate`, `app/proof`, `app/apply`, `components/` |
+| English and Urdu text | `lib/content/strings.ts` (borrower app), `lib/content/forms.ts` (apply, sign-in), `lib/engine/explain.ts` (journal) |
 | Tests | `tests/` |
 
 ## Deploying
