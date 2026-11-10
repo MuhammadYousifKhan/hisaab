@@ -6,7 +6,7 @@ import { randomInt } from 'node:crypto';
 import { hashSecret } from '@/lib/auth/password';
 import type { Conn } from '@/lib/db/client';
 import { appendAction, appendBorrower, appendLoan, clockFor, currentBook, loadState } from '@/lib/db/store';
-import { CH, normPhone, runChecks } from '@/lib/engine';
+import { CH, normPhone, runChecks, stateCoverage, traceChecks } from '@/lib/engine';
 import type { PayCh, PayStatus } from '@/lib/engine';
 import { ingestBank, ingestPayments } from '@/lib/ingest/ingest';
 import { paymentPayload, reversalPayload } from '@/lib/ingest/payloads';
@@ -90,6 +90,8 @@ export async function runSandbox(conn: Conn, by: string): Promise<SandboxResult>
   const jcBatch = await settle(T.normal, 15000); // Rs 150 short
   const epBatch = await settle(T.over, -5000); // Rs 50 over
   const caBatch = await settle(T.agent, 0); // exact
+  // JazzCash pays back Rs 100 of the Rs 150 it was short, quoting the batch; Rs 50 stays claimed.
+  if (jcBatch) await ingestBank([{ day: clock.day, min: clock.min, amount: 10000, ref: 'CLAIM-' + jcBatch, narration: 'JAZZCASH CLAIM ' + jcBatch, key: key('claim:' + jcBatch), source: 'Sandbox (bank)' }], conn);
   const L = await loadState({ conn, bookId: book.id });
   S = L.S;
 
@@ -117,8 +119,11 @@ export async function runSandbox(conn: Conn, by: string): Promise<SandboxResult>
     { label: 'Settlement Rs 150 short: gap booked as a claim', ok: !!jcBatch && !!ex('EX-SHT-' + jcBatch), detail: jcBatch ?? '—' },
     { label: 'Settlement Rs 50 over: extra held in suspense', ok: !!epBatch && !!ex('EX-OVR-' + epBatch), detail: epBatch ?? '—' },
     { label: 'Exact settlement matched to its bank line', ok: !!caBatch && S.batches.get(caBatch)?.settled === true && S.batches.get(caBatch)?.diff === 0, detail: caBatch ?? '—' },
+    { label: 'Channel paid back Rs 100 of the claim: matched, Rs 50 still claimed', ok: !!jcBatch && ex('EX-SHT-' + jcBatch)?.recovered === 10000 && ex('EX-SHT-' + jcBatch)?.status !== 'resolved', detail: 'CLAIM-' + (jcBatch ?? '—') },
     { label: 'Settlement never arrived: flagged after two days', ok: !!ex('EX-MIS-' + lateBatch), detail: 'EX-MIS-' + lateBatch },
     { label: 'Every ledger check still passes', ok: runChecks(S).every(c => c.pass), detail: S.ledger.entries.length + ' entries' },
+    { label: 'Every entry, payment, settlement and bank line traces back', ok: traceChecks(S).every(c => c.pass), detail: traceChecks(S).length + ' checks' },
+    { label: 'Every exceptional state in the book handled as designed', ok: stateCoverage(S).every(r => !r.bad), detail: stateCoverage(S).filter(r => r.count).length + ' states seen' },
   ];
   return { tag, borrowers: people.map(p => ({ id: p.id, name: p.name, phone: p.phone })), steps };
 }

@@ -106,6 +106,24 @@ export function explain(e: Entry, lang: Lang = 'en'): string {
     }
     case 'FEE_ACCEPTED':
       return 'The ' + R(p.diff) + ' gap in the ' + C(p.ch) + ' settlement of ' + D(p.batchDay) + ' was accepted as an extra channel fee.';
+    case 'CLAIM_RECOVERED': {
+      const how = p.line && /^BK-/.test(p.line) ? ' (bank line ' + p.line + ')' : '';
+      let s = C(p.ch) + ' paid back ' + R(p.amount) + how + ' towards the ' + R(p.diff) + ' shortfall in its settlement of ' + D(p.batchDay) + '.';
+      s += p.left ? ' ' + R(p.left) + ' is still claimed.' : ' The claim is closed.';
+      return s;
+    }
+    case 'CHANNEL_RETURN_DUE':
+      return 'The extra ' + R(p.amount) + ' in the ' + C(p.ch) + ' settlement of ' + D(p.batchDay) + ' is owed back to ' + C(p.ch) + ', so it moved from suspense to amounts to pay out.';
+    case 'REFUND_PAID': {
+      const ref = p.payRef ? (ur ? ' (حوالہ ' + LTR(p.payRef) + ')' : ' (reference ' + p.payRef + ')') : '';
+      if (p.bid) {
+        return ur
+          ? D(p.payDay) + ' والی ' + R(p.amount) + ' کی اضافی ادائیگی آپ کو واپس کر دی گئی' + ref + '۔'
+          : 'The extra ' + R(p.amount) + ' you paid on ' + D(p.payDay) + ' was refunded to you' + ref + '.';
+      }
+      if (p.batch) return R(p.amount) + ' was paid back to ' + C(p.ch) + ' for its settlement of ' + D(p.batchDay) + ref + '.';
+      return 'The ' + R(p.amount) + ' payment from ' + D(p.payDay) + ' was refunded to the sender' + ref + '.';
+    }
     default:
       return '';
   }
