@@ -31,7 +31,12 @@ export const T = {
       sent: 'Sent. The lender’s team can see it now.',
       repTitle: 'Your reports', repHeld: 'We found your payment. Our team is checking it.', repDone: 'Matched to your loan.', repAlready: 'This payment is already on your loan.',
       repFailed: 'This payment failed at {ch}. No money was taken.', repPending: 'Still processing at your bank.', repOther: 'We found it on a different loan. Our team will correct it.',
-      repNotFound: 'We haven’t received this from {ch} yet. We are checking with them.', repClaimed: 'We asked {ch} to trace it.', repRefund: 'Marked for refund to you.'
+      repNotFound: 'We haven’t received this from {ch} yet. We are checking with them.', repClaimed: 'We asked {ch} to trace it.', repRefund: 'Marked for refund to you.',
+      st_refunded: 'Refunded', sRefunded: 'Paid twice: the extra was refunded to you', refundPaidDelta: '{amt} refunded to you',
+      schTitle: 'My schedule', schDue: 'Due', schAmt: 'Amount', schPaid: 'Paid', schLeft: 'Left',
+      shareTitle: 'Share a checked record',
+      shareLead: 'Another lender can open this link to see your repayment record, checked against this lender’s books at the moment they open it. Only your first name, loan size and payment record are shown.',
+      shareCopy: 'Copy link', shareCopied: 'Link copied', verifyLine: 'Check it here: {url}'
     },
     ur: {
       greet: 'السلام علیکم، {name}', tabHome: 'خلاصہ', tabPay: 'ادائیگیاں', tabRec: 'میرا ریکارڈ', tabHelp: 'شکایت',
@@ -64,7 +69,12 @@ export const T = {
       sent: 'بھیج دیا۔ ادارے کی ٹیم اب اسے دیکھ سکتی ہے۔',
       repTitle: 'آپ کی شکایات', repHeld: 'ہمیں آپ کی ادائیگی مل گئی۔ ہماری ٹیم اسے جانچ رہی ہے۔', repDone: 'آپ کے قرض میں جمع ہو گئی۔', repAlready: 'یہ ادائیگی پہلے ہی آپ کے قرض میں جمع ہے۔',
       repFailed: 'یہ ادائیگی {ch} پر ناکام ہوئی تھی۔ کوئی رقم نہیں کٹی۔', repPending: 'آپ کا بینک ابھی کارروائی کر رہا ہے۔', repOther: 'یہ کسی دوسرے قرض میں ملی ہے۔ ہماری ٹیم اسے درست کرے گی۔',
-      repNotFound: 'یہ ادائیگی ابھی {ch} سے ہمیں نہیں ملی۔ ہم ان سے معلوم کر رہے ہیں۔', repClaimed: 'ہم نے {ch} سے اسے تلاش کرنے کو کہا ہے۔', repRefund: 'آپ کو واپسی کے لیے درج ہے۔'
+      repNotFound: 'یہ ادائیگی ابھی {ch} سے ہمیں نہیں ملی۔ ہم ان سے معلوم کر رہے ہیں۔', repClaimed: 'ہم نے {ch} سے اسے تلاش کرنے کو کہا ہے۔', repRefund: 'آپ کو واپسی کے لیے درج ہے۔',
+      st_refunded: 'واپس کر دی گئی', sRefunded: 'دو بار ادائیگی: اضافی رقم آپ کو واپس کر دی گئی', refundPaidDelta: '{amt} آپ کو واپس',
+      schTitle: 'میری اقساط کا شیڈول', schDue: 'آخری تاریخ', schAmt: 'رقم', schPaid: 'ادا شدہ', schLeft: 'باقی',
+      shareTitle: 'تصدیق شدہ ریکارڈ شیئر کریں',
+      shareLead: 'کوئی دوسرا ادارہ یہ لنک کھول کر آپ کا ادائیگی کا ریکارڈ دیکھ سکتا ہے، جو اسی وقت اس ادارے کے کھاتے سے جانچا جاتا ہے۔ صرف آپ کا پہلا نام، قرض کی رقم اور ادائیگی کا ریکارڈ دکھایا جاتا ہے۔',
+      shareCopy: 'لنک کاپی کریں', shareCopied: 'لنک کاپی ہو گیا', verifyLine: 'یہاں جانچیں: {url}'
     }
   } as const;
 
