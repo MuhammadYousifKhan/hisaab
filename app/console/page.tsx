@@ -10,10 +10,10 @@ import { pendingCount } from '@/lib/db/applications';
 import Intake from './Intake';
 import People from './People';
 import {
-  ACCTS, CH, KIND_LABEL, REASON_LABEL, appliedInfo, bankByDay, dayName, entryById, explain, fmtDate, fmtRs, forecastDaily, forecastTotal,
-  hhmm, iso, kpis, maskPhone, txState,
+  ACCTS, CH, KIND_LABEL, REASON_LABEL, appliedInfo, bankByDay, channelSummary, claimLeft, dayName, entryById, explain, fmtDate, fmtRs,
+  forecastDaily, forecastTotal, hhmm, iso, kpis, maskPhone, txState,
 } from '@/lib/engine';
-import type { Batch, Ch, Exception, State, Txn } from '@/lib/engine';
+import type { Batch, Ch, ChannelRow, Exception, State, Txn } from '@/lib/engine';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Lender console' };
@@ -48,7 +48,13 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
       ? <div className="done" role="status"><Pill cls="good" icon="✓">Posted {e.id}</Pill><span>{REASON_LABEL[e.reason] || e.reason}: {explain(e, 'en')}</span></div>
       : <div className="done" role="status"><Pill cls="good" icon="✓">Recorded</Pill><span>{done === 'claim' ? 'Claim raised. The item stays open until the money arrives.' : 'Marked as done.'}</span></div>;
   } else if (err) {
-    banner = <div className="done crit" role="alert">{err === 'borrower' ? 'Choose a borrower before applying the payment.' : err === 'stale' ? 'That item was already resolved. The queue below is up to date.' : 'That request was not valid, so nothing was written.'}</div>;
+    const msg: Record<string, string> = {
+      borrower: 'Choose a borrower before applying the payment.',
+      stale: 'That item was already resolved. The queue below is up to date.',
+      claim: 'Choose the open claim this money pays back.',
+      toomuch: 'That is more than the claim still owed, so nothing was written.',
+    };
+    banner = <div className="done crit" role="alert">{msg[err] ?? 'That request was not valid, so nothing was written.'}</div>;
   }
 
   return (
@@ -58,7 +64,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
         <Kpi label="Collected in bank" tag="Actual" val={<Rs v={K.bank} />} sub={'after ' + fmtRs(K.fees) + ' channel fees'} />
         <Kpi label="On the way from channels" tag="Actual" val={<Rs v={K.transit} />} sub={K.overdueTransit ? <Pill cls="crit" icon="!">{fmtRs(K.overdueTransit)} overdue</Pill> : 'normally settles next morning'} />
         <Kpi label="Pending at banks" tag="Memo" val={<Rs v={K.pending} />} sub={K.pendingN + ' transfer' + (K.pendingN === 1 ? '' : 's') + ', not counted yet'} />
-        <Kpi label="Needs review" val={String(K.open)} sub={fmtRs(K.suspense) + ' held in suspense' + (K.claimed ? ' · ' + K.claimed + ' waiting on channels' : '')} />
+        <Kpi label="Needs review" val={String(K.open)} sub={fmtRs(K.suspense) + ' held in suspense' + (K.claimed ? ' · ' + K.claimed + ' waiting on channels' : '') + (K.payablesN ? ' · ' + fmtRs(K.payables) + ' to pay out' : '')} />
         <Kpi label="Matched automatically" val={autoPct + '%'} sub={K.autoN + ' of ' + K.successN + ' channel payments'} />
       </div>
       <div className="c-grid">
@@ -118,7 +124,7 @@ function Kpi({ label, tag, val, sub }: { label: string; tag?: string; val: React
 
 /* ---------------- Review queue ---------------- */
 function Queue({ S, bookId }: { S: State; bookId: number }) {
-  const prio = (e: Exception) => (e.kind === 'borrower_report' ? 0 : e.kind === 'missing_deposit' ? 1 : 2);
+  const prio = (e: Exception) => (e.kind === 'borrower_report' ? 0 : e.kind === 'missing_deposit' ? 1 : e.kind === 'refund_payable' ? 3 : 2);
   const open = S.exceptions.filter(e => e.status !== 'resolved').sort((a, b) => prio(a) - prio(b) || b.day - a.day);
   const done = S.exceptions.filter(e => e.status === 'resolved').slice().reverse();
   return (
@@ -135,6 +141,7 @@ function Queue({ S, bookId }: { S: State; bookId: number }) {
                 <Pill cls="good" icon="✓">{KIND_LABEL[e.kind]}</Pill>
                 <span className="mono">{e.id}</span>
                 <span>{e.resolution?.note}</span>
+                {e.resolution?.reason && <span className="reason">“{e.resolution.reason}”</span>}
                 {e.resolution?.je && <span className="mono">{e.resolution.je}</span>}
                 <span className="muted">{e.resolution?.by}</span>
               </div>
@@ -150,29 +157,37 @@ function Mono({ v }: { v: string }) { return <span className="mono">{v}</span>; 
 const bName = (S: State, id?: string | null) => (id && S.bById.has(id) ? S.bById.get(id)!.name : '—');
 const chn = (ch?: Ch) => (ch ? CH[ch].name : '');
 
-function Decide({ type, exId, label, ghost, bid, bookId }: { type: string; exId: string; label: string; ghost?: boolean; bid?: string; bookId: number }) {
+/** One form per review item, so every decision on it carries the staff member's reason. */
+function DecisionForm({ exId, bookId, children, reason = true, hidden }: { exId: string; bookId: number; children: ReactNode; reason?: boolean; hidden?: Record<string, string> }) {
   return (
-    <form action={opsDecision} style={{ display: 'contents' }}>
+    <form action={opsDecision} className="decide">
       <input type="hidden" name="bookId" value={bookId} />
-      <input type="hidden" name="type" value={type} />
       <input type="hidden" name="exId" value={exId} />
-      {bid && <input type="hidden" name="bid" value={bid} />}
-      <SubmitButton ghost={ghost}>{label}</SubmitButton>
+      {hidden && Object.entries(hidden).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
+      <div className="actions">{children}</div>
+      {reason && <input name="note" className="reason-in" maxLength={200} placeholder="Reason (optional): kept with the decision in the audit trail" aria-label={'Reason for the decision on ' + exId} />}
     </form>
   );
 }
-function ApplyTo({ S, ex, def, bookId }: { S: State; ex: Exception; def?: string | null; bookId: number }) {
+function Btn({ type, children, ghost }: { type: string; children: ReactNode; ghost?: boolean }) {
+  return <SubmitButton name="type" value={type} ghost={ghost}>{children}</SubmitButton>;
+}
+function BorrowerSelect({ S, ex, def }: { S: State; ex: Exception; def?: string | null }) {
   return (
-    <form action={opsDecision} className="actions" style={{ display: 'flex' }}>
-      <input type="hidden" name="bookId" value={bookId} />
-      <input type="hidden" name="type" value="apply" />
-      <input type="hidden" name="exId" value={ex.id} />
-      <select name="bid" defaultValue={def || ''} aria-label={'Borrower for ' + ex.id} required>
-        {!def && <option value="">Choose borrower…</option>}
-        {S.borrowers.map(b => <option key={b.id} value={b.id}>{b.name} · {b.loanId ?? b.id + ', no loan'}</option>)}
-      </select>
-      <SubmitButton>Apply to borrower</SubmitButton>
-    </form>
+    <select name="bid" defaultValue={def || ''} aria-label={'Borrower for ' + ex.id}>
+      {!def && <option value="">Choose borrower…</option>}
+      {S.borrowers.map(b => <option key={b.id} value={b.id}>{b.name} · {b.loanId ?? b.id + ', no loan'}</option>)}
+    </select>
+  );
+}
+/** Open shortfall claims that this much money could pay back (optionally on one channel only). */
+const claimsFor = (S: State, amount: number, ch?: Ch) =>
+  S.exceptions.filter(c => c.kind === 'settlement_short' && c.status !== 'resolved' && claimLeft(c) >= amount && (!ch || c.ch === ch));
+function ClaimSelect({ claims, ex }: { claims: Exception[]; ex: Exception }) {
+  return (
+    <select name="claim" defaultValue={claims[0].id} aria-label={'Claim paid back by ' + ex.id}>
+      {claims.map(c => <option key={c.id} value={c.id}>{chn(c.ch)} {c.batch?.slice(-10)} · {fmtRs(claimLeft(c))} still claimed</option>)}
+    </select>
   );
 }
 
@@ -192,45 +207,70 @@ function ExCard({ S, ex, bookId }: { S: State; ex: Exception; bookId: number }) 
     facts = [['Payment', <Mono key="t" v={tx.tid} />], ['Received', fmtDate(tx.day) + ', ' + hhmm(tx.min)]];
     if (linkedReports.length) suggest = <><b>{bName(S, linkedReports[0].bid)}</b> reported this exact transaction ID from the borrower app.</>;
     else if (ex.suggest) suggest = <><b>{bName(S, ex.suggest.bid)}</b>: {ex.suggest.why}. Not applied automatically, because a name in a note is not proof.</>;
-    actions = <><ApplyTo bookId={bookId} S={S} ex={ex} def={def} /><Decide bookId={bookId} type="refund" exId={ex.id} label="Refund to sender" ghost /></>;
+    actions = <DecisionForm exId={ex.id} bookId={bookId}><BorrowerSelect S={S} ex={ex} def={def} /><Btn type="apply">Apply to borrower</Btn><Btn type="refund" ghost>Refund to sender</Btn></DecisionForm>;
   } else if (ex.kind === 'reference_conflict' && tx && ex.refBid) {
     title = <><Rs v={ex.amount} /> with reference “{tx.ref}”, which is someone else’s loan</>;
     why = <>The reference points to {bName(S, ex.refBid)} ({S.loanByBid.get(ex.refBid)?.id}), but {ex.suggest?.why}. Applying it to the wrong loan would hide a missed payment, so it is held.</>;
     facts = [['Payment', <><Mono v={tx.tid} /> · {ch}</>], ['Received', fmtDate(tx.day) + ', ' + hhmm(tx.min)]];
     suggest = <>Apply to <b>{bName(S, ex.suggest?.bid)}</b>, the account holder.</>;
-    actions = <ApplyTo bookId={bookId} S={S} ex={ex} def={ex.suggest?.bid} />;
+    actions = <DecisionForm exId={ex.id} bookId={bookId}><BorrowerSelect S={S} ex={ex} def={ex.suggest?.bid} /><Btn type="apply">Apply to borrower</Btn></DecisionForm>;
   } else if (ex.kind === 'possible_duplicate' && tx && ex.dupOf) {
     const first = S.txns.get(ex.dupOf)!;
     title = <>{bName(S, ex.bid)} paid <Rs v={ex.amount} /> twice, {Math.abs(tx.min - first.min)} minutes apart</>;
     why = <>{tx.tid} has the same borrower, amount and channel as {first.tid}, which was applied. This one is held until we know whether the borrower meant to pay ahead.</>;
     facts = [['First', <><Mono v={first.tid} /> · {hhmm(first.min)}</>], ['Second', <><Mono v={tx.tid} /> · {hhmm(tx.min)}</>]];
     suggest = <>Most double payments within minutes are app retries. Refund unless the borrower asks to keep it.</>;
-    actions = <><Decide bookId={bookId} type="refund" exId={ex.id} label="Mark for refund" /><Decide bookId={bookId} type="apply" exId={ex.id} label="Keep as extra payment" ghost bid={ex.bid ?? undefined} /></>;
+    actions = <DecisionForm exId={ex.id} bookId={bookId} hidden={ex.bid ? { bid: ex.bid } : undefined}><Btn type="refund">Mark for refund</Btn><Btn type="apply" ghost>Keep as extra payment</Btn></DecisionForm>;
   } else if (ex.kind === 'reversal' && tx) {
     title = <>{ch} reversed {bName(S, ex.bid)}’s <Rs v={ex.amount} /> payment</>;
     why = <>Reason from the channel: “{ex.reason}”. A mirror entry was posted automatically and installment {(ex.nos || []).map(n => '#' + n).join(', ')} is open again. The borrower should hear it from us before they see it.</>;
     facts = [['Payment', <><Mono v={tx.tid} /> · paid {fmtDate(tx.day)}</>], ['Reversed', fmtDate(tx.reversed?.day ?? ex.day)]];
-    actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark borrower notified" />;
+    actions = <DecisionForm exId={ex.id} bookId={bookId}><Btn type="ack">Mark borrower notified</Btn></DecisionForm>;
   } else if (ex.kind === 'unexpected_deposit' && tx) {
     const def = linkedReports[0]?.bid ?? null;
     title = <><Rs v={ex.amount} /> reached the bank with no payment record</>;
     why = <>Bank narration: “{tx.ref}”. No channel reported this money, so the data alone can’t say whose it is.</>;
     facts = [['Bank line', <Mono key="l" v={tx.tid} />], ['Value date', fmtDate(tx.day)]];
+    const claims = claimsFor(S, ex.amount);
     if (linkedReports.length) suggest = <><b>{bName(S, def)}</b> reported this deposit from the borrower app.</>;
-    actions = <><ApplyTo bookId={bookId} S={S} ex={ex} def={def} /><Decide bookId={bookId} type="refund" exId={ex.id} label="Return to depositor" ghost /></>;
+    else if (claims.length) suggest = <>It could be a channel paying back a shortfall: {claims.length === 1 ? 'one open claim is' : claims.length + ' open claims are'} at least this size. Check the narration before choosing.</>;
+    actions = (
+      <DecisionForm exId={ex.id} bookId={bookId}>
+        <BorrowerSelect S={S} ex={ex} def={def} /><Btn type="apply">Apply to borrower</Btn><Btn type="refund" ghost>Return to depositor</Btn>
+        {claims.length > 0 && <><ClaimSelect claims={claims} ex={ex} /><Btn type="recover" ghost>Channel paying back this claim</Btn></>}
+      </DecisionForm>
+    );
   } else if (ex.kind === 'missing_deposit' && b) {
     title = <>{ch} has not settled {fmtDate(b.day)} ({b.txns.length} payment{b.txns.length === 1 ? '' : 's'})</>;
     why = <>Expected <Rs v={b.expectedNet ?? 0} /> on {fmtDate(b.day + 1)}. Nothing has arrived after {TODAY - b.day - 1} days. The payments still count for the borrowers; the money sits in clearing, marked overdue.</>;
     facts = [['Payments', <>{b.txns.map(id => { const x = S.txns.get(id)!; return <div key={id}><Mono v={id} /> {bName(S, x.borrowerId)} {fmtRs(x.amount)}</div>; })}</>]];
-    actions = ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}. Stays open until the money arrives.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Raise claim with ' + ch} />;
+    actions = ex.status === 'claimed'
+      ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)} by {ex.claim!.by}{ex.claim!.reason ? ': “' + ex.claim!.reason + '”' : ''}. Stays open until the money arrives.</span>
+      : <DecisionForm exId={ex.id} bookId={bookId}><Btn type="claim">{'Raise claim with ' + ch}</Btn></DecisionForm>;
   } else if ((ex.kind === 'settlement_short' || ex.kind === 'settlement_over') && b) {
     const short = ex.kind === 'settlement_short';
+    const left = claimLeft(ex);
     title = <>{ch} settlement for {fmtDate(b.day)} arrived <Rs v={ex.amount} /> {short ? 'short' : 'over'}</>;
-    why = <>{b.txns.length} payments totalling <Rs v={b.gross} />, minus a {(CH[b.ch].bps / 100).toFixed(1)}% fee of <Rs v={b.fee ?? 0} />{b.clawback ? <>, minus <Rs v={b.clawback} /> reversed</> : null} = <Rs v={b.expectedNet ?? 0} /> expected. The bank received <Rs v={b.received ?? 0} />.</>;
+    why = <>{b.txns.length} payments totalling <Rs v={b.gross} />, minus a {(CH[b.ch].bps / 100).toFixed(1)}% fee of <Rs v={b.fee ?? 0} />{b.clawback ? <>, minus <Rs v={b.clawback} /> reversed</> : null} = <Rs v={b.expectedNet ?? 0} /> expected. The bank received <Rs v={b.received ?? 0} />.{short ? <> The gap is a claim on {ch}: a bank credit with reference <span className="mono">CLAIM-{b.id}</span> is matched to it automatically.</> : <> The extra sits in suspense until it is returned or offset.</>}</>;
     facts = [['Bank line', <><Mono v={b.lineId ?? ''} /> · {fmtDate(b.settleDay ?? b.day)}</>]];
-    actions = short
-      ? <>{ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)}.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Raise claim with ' + ch} ghost />}<Decide bookId={bookId} type="accept_fee" exId={ex.id} label="Accept as extra fee" /></>
-      : <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark as checked" />;
+    if (short && ex.recovered) facts.push(['Paid back', <><Rs v={ex.recovered} /> so far · <Rs v={left} /> still claimed</>]);
+    if (short) {
+      actions = (
+        <DecisionForm exId={ex.id} bookId={bookId}>
+          {ex.status === 'claimed' ? <span className="muted">Claim raised {fmtDate(ex.claim!.day)} by {ex.claim!.by}{ex.claim!.reason ? ': “' + ex.claim!.reason + '”' : ''}.</span> : <Btn type="claim" ghost>{'Raise claim with ' + ch}</Btn>}
+          <Btn type="accept_fee">Accept {fmtRs(left)} as extra fee</Btn>
+        </DecisionForm>
+      );
+    } else {
+      const claims = claimsFor(S, ex.amount, ex.ch);
+      if (claims.length) suggest = <>{ch} also has an open shortfall claim. Offsetting nets the two without moving money twice.</>;
+      actions = (
+        <DecisionForm exId={ex.id} bookId={bookId}>
+          <Btn type="return">Owe it back to {ch}</Btn>
+          {claims.length > 0 && <><ClaimSelect claims={claims} ex={ex} /><Btn type="recover" ghost>Offset against claim</Btn></>}
+        </DecisionForm>
+      );
+    }
   } else if (ex.kind === 'borrower_report') {
     title = <>{bName(S, ex.bid)} says <Rs v={ex.amount} /> by {ch} on {fmtDate(ex.payDay ?? TODAY)} is missing</>;
     facts = [['Reported ID', <Mono key="r" v={ex.reportedTid ?? ''} />]];
@@ -239,23 +279,36 @@ function ExCard({ S, ex, bookId }: { S: State; ex: Exception; bookId: number }) 
     if (ex.finding === 'held' && l && lt) {
       why = <>Found it: {ex.tid} is held as “{KIND_LABEL[l.kind].toLowerCase()}” ({l.id}). Applying it resolves both items.</>;
       facts.push(['Found', <><Rs v={lt.amount} /> · {fmtDate(lt.day)}{lt.amount !== ex.amount ? ' · amount differs from report' : ''}</>]);
-      actions = <Decide bookId={bookId} type="apply" exId={l.id} label={'Apply ' + ex.tid + ' to ' + bName(S, ex.bid)} bid={ex.bid ?? undefined} />;
+      actions = <DecisionForm exId={l.id} bookId={bookId} hidden={ex.bid ? { bid: ex.bid } : undefined}><Btn type="apply">{'Apply ' + ex.tid + ' to ' + bName(S, ex.bid)}</Btn></DecisionForm>;
     } else if (ex.finding === 'other' && lt) {
       why = <>{ex.tid} is already applied to {bName(S, lt.borrowerId)}. Check with both borrowers before anything moves.</>;
-      actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark as checked" />;
+      actions = <DecisionForm exId={ex.id} bookId={bookId}><Btn type="ack">Mark as checked</Btn></DecisionForm>;
     } else if (ex.tid) {
       why = <>Found {ex.tid}, but its state is “{String(ex.finding).replace('_', ' ')}”. Explain this to the borrower before closing.</>;
-      actions = <Decide bookId={bookId} type="ack" exId={ex.id} label="Mark borrower informed" />;
+      actions = <DecisionForm exId={ex.id} bookId={bookId}><Btn type="ack">Mark borrower informed</Btn></DecisionForm>;
     } else {
       why = <>No payment with this ID in any channel file yet.</>;
-      actions = ex.status === 'claimed' ? <span className="muted">Trace requested {fmtDate(ex.claim!.day)}.</span> : <Decide bookId={bookId} type="claim" exId={ex.id} label={'Ask ' + ch + ' to trace'} />;
+      actions = ex.status === 'claimed' ? <span className="muted">Trace requested {fmtDate(ex.claim!.day)}.</span> : <DecisionForm exId={ex.id} bookId={bookId}><Btn type="claim">{'Ask ' + ch + ' to trace'}</Btn></DecisionForm>;
     }
+  } else if (ex.kind === 'refund_payable') {
+    const from = ex.from ? S.exById.get(ex.from) : undefined;
+    const who = ex.bid ? bName(S, ex.bid) : ex.batch ? ch : tx?.ch === 'BR' ? 'the depositor' : 'the sender' + (tx?.phone ? ' (' + maskPhone(tx.phone) + ')' : '');
+    title = <><Rs v={ex.amount} /> to pay back to {who}</>;
+    why = <>Decided {fmtDate(ex.day)}{from?.resolution ? <> by {from.resolution.by}{from.resolution.reason ? <>: “{from.resolution.reason}”</> : null}</> : null}. Pay it out of the bank, then record the payout reference here. The ledger moves it out of refunds payable; until then it is owed.</>;
+    facts = [['From', <><Mono v={ex.from ?? ''} />{from ? ' · ' + KIND_LABEL[from.kind].toLowerCase() : ''}</>], ...(ex.tid ? [['Payment', <><Mono key="t" v={ex.tid} /> · {chn(tx?.ch)}</>] as [string, ReactNode]] : [])];
+    actions = (
+      <DecisionForm exId={ex.id} bookId={bookId}>
+        <input name="ref" maxLength={60} placeholder="Payout reference, e.g. wallet transfer ID" aria-label={'Payout reference for ' + ex.id} />
+        <Btn type="paid">Record as paid out</Btn>
+      </DecisionForm>
+    );
   }
   const hi = ex.kind === 'borrower_report' || ex.kind === 'missing_deposit';
+  const icon = ex.kind === 'borrower_report' ? '☎' : ex.kind === 'refund_payable' ? '↩' : hi ? '!' : '?';
   return (
     <article className={'exc' + (hi ? ' hi' : '')}>
       <div className="exc-head">
-        <Pill cls={hi ? 'crit' : 'warn'} icon={ex.kind === 'borrower_report' ? '☎' : hi ? '!' : '?'}>{KIND_LABEL[ex.kind]}</Pill>
+        <Pill cls={hi ? 'crit' : ex.kind === 'refund_payable' ? 'info' : 'warn'} icon={icon}>{KIND_LABEL[ex.kind]}</Pill>
         {ex.status === 'claimed' && <Pill cls="info" icon="→">Claim raised</Pill>}
         <span className="mono muted">{ex.id}</span>
         <span className="muted">{fmtDate(ex.day)}</span>
@@ -264,7 +317,7 @@ function ExCard({ S, ex, bookId }: { S: State; ex: Exception; bookId: number }) 
       <p className="why">{why}</p>
       {facts.length > 0 && <Facts items={facts} />}
       {suggest && <div className="suggest"><Pill cls="info" icon="★">Suggestion</Pill><span>{suggest}</span></div>}
-      <div className="actions">{actions}</div>
+      {actions}
     </article>
   );
 }
@@ -290,7 +343,7 @@ function Payments({ S, sp, link }: { S: State; sp: SP; link: (o: Record<string, 
         </div>
         <div className="field"><label htmlFor="f-fst">State</label>
           <select id="f-fst" name="st" defaultValue={fst}>
-            {[['all', 'All states'], ['settled', 'Settled'], ['transit', 'In transit'], ['held', 'Held'], ['failed', 'Failed'], ['pending', 'Pending'], ['reversed', 'Reversed'], ['refund_due', 'Refund due']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {[['all', 'All states'], ['settled', 'Settled'], ['transit', 'In transit'], ['held', 'Held'], ['failed', 'Failed'], ['pending', 'Pending'], ['reversed', 'Reversed'], ['refund_due', 'Refund due'], ['refunded', 'Refunded']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
         <button type="submit" className="btn sm ghost">Filter</button>
@@ -364,6 +417,8 @@ function Settlements({ S }: { S: State }) {
   const list = Array.from(S.batches.values()).filter(b => b.ch !== 'RA').sort((a, b) => b.day - a.day || a.ch.localeCompare(b.ch));
   return (
     <>
+      <ChannelTable S={S} />
+      <h3 className="mt" style={{ marginBottom: 8 }}>Batches</h3>
       <div className="tbl-wrap">
         <table>
           <thead><tr><th>Batch</th><th>Channel</th><th className="n">Payments</th><th className="n">Gross</th><th className="n">Fee</th><th className="n">Reversed</th><th className="n">Expected</th><th className="n">Received</th><th className="n">Gap</th><th>Status</th></tr></thead>
@@ -389,6 +444,40 @@ function Settlements({ S }: { S: State }) {
         </table>
       </div>
     </>
+  );
+}
+
+/** Fees, shortfalls and money in transit per channel. Actual figures only: settled batches and posted entries. */
+function ChannelTable({ S }: { S: State }) {
+  const rows = channelSummary(S);
+  const tot = (k: keyof Omit<ChannelRow, 'ch'>) => rows.reduce((s, r) => s + r[k], 0);
+  const money = (v: number) => (v ? fmtRs(v) : '—');
+  const pct = (a: number, n: number) => (n ? Math.round((a / n) * 100) + '%' : '—');
+  return (
+    <section className="panel">
+      <div className="row"><h3>By channel</h3><span className="pill neutral">Actual</span></div>
+      <div className="tbl-wrap">
+        <table>
+          <thead><tr><th>Channel</th><th className="n">Payments</th><th className="n">Collected</th><th className="n">Matched by itself</th><th className="n">Reversed</th><th className="n">Fees</th><th className="n">Short</th><th className="n">Paid back</th><th className="n">Taken as fee</th><th className="n">Still claimed</th><th className="n">Over</th><th className="n">In transit</th></tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.ch}>
+                <td className="nw">{CH[r.ch].name}</td><td className="n">{r.payments}</td><td className="n">{money(r.collected)}</td><td className="n">{pct(r.auto, r.payments)}</td>
+                <td className="n">{money(r.reversed)}</td><td className="n">{money(r.fees)}</td><td className="n">{money(r.shortfall)}</td><td className="n">{money(r.recovered)}</td>
+                <td className="n">{money(r.extraFees)}</td><td className="n">{r.claimOpen ? <b>{fmtRs(r.claimOpen)}</b> : '—'}</td><td className="n">{money(r.over)}</td>
+                <td className="n">{money(r.transit)}{r.overdue ? <><br /><Pill cls="crit" icon="!">{fmtRs(r.overdue)} overdue</Pill></> : null}</td>
+              </tr>
+            ))}
+            <tr>
+              <td><b>Total</b></td><td className="n"><b>{tot('payments')}</b></td><td className="n"><b>{money(tot('collected'))}</b></td><td className="n"><b>{pct(tot('auto'), tot('payments'))}</b></td>
+              <td className="n"><b>{money(tot('reversed'))}</b></td><td className="n"><b>{money(tot('fees'))}</b></td><td className="n"><b>{money(tot('shortfall'))}</b></td><td className="n"><b>{money(tot('recovered'))}</b></td>
+              <td className="n"><b>{money(tot('extraFees'))}</b></td><td className="n"><b>{money(tot('claimOpen'))}</b></td><td className="n"><b>{money(tot('over'))}</b></td><td className="n"><b>{money(tot('transit'))}</b></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small" style={{ marginTop: 8 }}>Fees are each channel’s published rate on settled batches. Short, over and claims come from comparing every settlement with its bank line; a claim stays open until the channel pays it back or it is accepted as a fee.</p>
+    </section>
   );
 }
 
@@ -424,7 +513,7 @@ function Journal({ S, sp, link }: { S: State; sp: SP; link: (o: Record<string, s
                 <tr key={e.id} className={isOpen ? 'open-row' : undefined}>
                   <td><Link className="trace-link" href={link({ ...keep, je: isOpen ? '' : e.id })} scroll={false} aria-expanded={isOpen}>{e.id} {isOpen ? '▾' : '▸'}</Link></td>
                   <td className="nw">{fmtDate(e.day)}</td><td className="nw">{REASON_LABEL[e.reason] || e.reason}</td>
-                  <td style={{ minWidth: 280 }}>{explain(e, 'en')}</td><td className="n">{fmtRs(e.total)}</td><td className="nw muted">{e.actor}</td>
+                  <td style={{ minWidth: 280 }}>{explain(e, 'en')}{e.params.note && <><br /><span className="reason">Staff reason: “{e.params.note}”</span></>}</td><td className="n">{fmtRs(e.total)}</td><td className="nw muted">{e.actor}</td>
                 </tr>,
                 isOpen ? (
                   <tr key={e.id + '-l'} className="trace">
